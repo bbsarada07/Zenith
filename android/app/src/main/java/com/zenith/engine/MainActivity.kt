@@ -17,10 +17,12 @@ class MainActivity : AppCompatActivity() {
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
             val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
+                action = "START_CAPTURE"
                 putExtra("RESULT_CODE", result.resultCode)
-                putExtra("DATA", result.data)
+                putExtra("DATA_INTENT", result.data) // Passed as explicit intent parcelable
             }
             startForegroundService(serviceIntent)
+            finish() // Minimizes main activity so overlay draws over home/other apps
         }
     }
 
@@ -28,7 +30,7 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         
         val textView = TextView(this).apply {
-            text = "Zenith Engine Active\nScreen Capture Active"
+            text = "Zenith Engine Active\nScreen Capture Initializing..."
             textSize = 20f
             setPadding(50, 50, 50, 50)
         }

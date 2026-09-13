@@ -3,7 +3,6 @@ package com.zenith.engine
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -54,8 +53,8 @@ class ScreenCaptureService : Service() {
         const val ACTION_START = "com.zenith.engine.action.START_CAPTURE"
         const val ACTION_STOP = "com.zenith.engine.action.STOP_CAPTURE"
 
-        const val EXTRA_RESULT_CODE = "extra_result_code"
-        const val EXTRA_RESULT_DATA = "extra_result_data"
+        const val EXTRA_RESULT_CODE = "RESULT_CODE"
+        const val EXTRA_RESULT_DATA = "DATA_INTENT"
 
         // Broadcast action for legacy/cross-process HUD receivers
         const val ACTION_DETECTIONS_BROADCAST = "com.zenith.engine.DETECTIONS_UPDATED"
@@ -114,30 +113,34 @@ class ScreenCaptureService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
-            ACTION_START -> {
-                val resultCode = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
-                val resultData = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    intent.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
-                } else {
-                    @Suppress("DEPRECATION")
-                    intent.getParcelableExtra(EXTRA_RESULT_DATA)
-                }
+        val action = intent?.action
 
-                if (resultCode != 0 && resultData != null) {
-                    startForegroundServiceWithNotification()
-                    startCapture(resultCode, resultData)
-                } else {
-                    Log.e(TAG, "Cannot start capture: Missing MediaProjection permission intent data.")
-                    stopSelf()
-                }
-            }
-            ACTION_STOP -> {
-                stopCapture()
-                stopSelf()
-            }
+        // 1. Mandatory for Android 14+: Always transition to foreground immediately
+        startForegroundServiceWithNotification()
+
+        if (action == ACTION_STOP) {
+            stopCapture()
+            stopSelf()
+            return START_NOT_STICKY
         }
-        return START_NOT_STICKY
+
+        val resultCode = intent?.getIntExtra(EXTRA_RESULT_CODE, 0) ?: 0
+        val dataIntent: Intent? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            intent?.getParcelableExtra(EXTRA_RESULT_DATA, Intent::class.java)
+        } else {
+            @Suppress("DEPRECATION")
+            intent?.getParcelableExtra(EXTRA_RESULT_DATA)
+        }
+
+        // 2. Validate token and start virtual display capture
+        if (resultCode != 0 && dataIntent != null) {
+            Log.d(TAG, "MediaProjection token received. Starting Virtual Display...")
+            startCapture(resultCode, dataIntent)
+        } else {
+            Log.e(TAG, "Invalid MediaProjection result code or intent data.")
+        }
+
+        return START_STICKY
     }
 
     private fun startForegroundServiceWithNotification() {
