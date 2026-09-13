@@ -19,6 +19,7 @@ import android.os.HandlerThread
 import android.os.IBinder
 import android.util.DisplayMetrics
 import android.util.Log
+import android.view.Gravity
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
@@ -220,9 +221,28 @@ class ScreenCaptureService : Service() {
         // Display floating HUD overlay view on screen
         try {
             if (overlayHudView == null) {
-                overlayHudView = OverlayHudView(applicationContext).apply {
-                    show()
+                val hud = OverlayHudView(applicationContext)
+                val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                } else {
+                    @Suppress("DEPRECATION")
+                    WindowManager.LayoutParams.TYPE_PHONE
                 }
+
+                val params = WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    layoutFlag,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    PixelFormat.TRANSLUCENT
+                ).apply {
+                    gravity = Gravity.TOP or Gravity.START
+                }
+
+                windowManager.addView(hud, params)
+                overlayHudView = hud
                 Log.i(TAG, "OverlayHudView successfully displayed on screen.")
             }
         } catch (e: Exception) {
@@ -263,6 +283,7 @@ class ScreenCaptureService : Service() {
 
                     // Emit to SharedFlow for in-app floating overlay views
                     _detectionsFlow.tryEmit(detections)
+                    overlayHudView?.updateDetections(detections)
 
                     // Optional local broadcast for decouple module architectures
                     val intent = Intent(ACTION_DETECTIONS_BROADCAST).apply {
@@ -281,7 +302,14 @@ class ScreenCaptureService : Service() {
     }
 
     private fun stopCapture() {
-        overlayHudView?.dismiss()
+        overlayHudView?.let { hud ->
+            try {
+                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                wm.removeView(hud)
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to remove OverlayHudView: ${e.message}", e)
+            }
+        }
         overlayHudView = null
 
         virtualDisplay?.release()
