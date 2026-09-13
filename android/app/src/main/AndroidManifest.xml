@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- Foreground Service & MediaProjection Permissions (Mandatory for Android 14 / API 34+) -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- Overlay & Game HUD Permissions -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <!-- Local Network & Office Kit Telemetry Permissions -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+
+    <!-- Hardware Acceleration & Performance -->
+    <uses-feature android:name="android.hardware.ram.normal" android:required="true" />
+    <uses-feature android:name="android.hardware.vulkan.level" android:version="1" android:required="false" />
+
+    <application
+        android:allowBackup="false"
+        android:icon="@android:drawable/sym_def_app_icon"
+        android:label="Zenith Engine"
+        android:roundIcon="@android:drawable/sym_def_app_icon"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.AppCompat.NoActionBar"
+        android:usesCleartextTraffic="true"
+        android:largeHeap="true"
+        tools:targetApi="35">
+
+        <!-- Main Launcher Activity -->
+        <activity
+            android:name="com.zenith.engine.MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- Screen Capture Foreground Service -->
+        <service
+            android:name="com.zenith.engine.service.ScreenCaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection"
+            tools:node="merge" />
+
+    </application>
+
+</manifest>

@@ -1,0 +1,114 @@
+# ==========================================
+# Android & Gradle Build Artifacts
+# ==========================================
+.gradle/
+android/.gradle/
+**/build/
+build/
+android/app/build/
+buildOutputCleanup/
+local.properties
+android/local.properties
+
+# Android package & signing binaries
+*.apk
+*.apks
+*.aab
+*.keystore
+*.jks
+*.pepk
+
+# Android NDK / Profiling / Captures
+.cxx/
+**/captures/
+captures/
+.externalNativeBuild/
+
+# ==========================================
+# Python & Virtual Environments
+# ==========================================
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# Distribution / packaging
+dist/
+*.egg-info/
+.installed.cfg
+*.egg
+.eggs/
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+
+# ==========================================
+# AI / ML Models & Heavy Binaries
+# ==========================================
+*.onnx
+*.tflite
+*.pb
+*.bin
+*.engine
+*.pt
+*.pth
+*.weights
+*.ckpt
+*.safetensors
+
+# ==========================================
+# IDEs & Editor Configuration
+# ==========================================
+.idea/
+.vscode/
+*.iml
+*.ipr
+*.iws
+*.swp
+*.swo
+*~
+
+# ==========================================
+# Environment, Secrets & Credentials
+# ==========================================
+*.env
+.env.*
+*.pem
+*.key
+*.p12
+*.crt
+*.cert
+
+# ==========================================
+# Logs & Temporary Files
+# ==========================================
+*.log
+*.tmp
+*.temp
+
+# ==========================================
+# OS Generated Files
+# ==========================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini

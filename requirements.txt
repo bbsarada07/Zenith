@@ -1,0 +1,8 @@
+ultralytics>=8.3.0
+onnx>=1.16.0
+onnxruntime>=1.19.0
+onnxslim>=0.1.34
+opencv-python-headless>=4.10.0
+numpy>=1.26.0,<2.0.0
+torch>=2.4.0
+torchvision>=0.19.0

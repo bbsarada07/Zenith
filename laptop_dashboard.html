@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zenith Engine | iQOO Office Kit Telemetry</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #0a0b0e;
+            --bg-card: #12151c;
+            --bg-card-hover: #181d26;
+            --border-color: #232a38;
+            --accent-cyan: #00f0ff;
+            --accent-yellow: #ffe600;
+            --accent-red: #ff0055;
+            --accent-green: #00ff88;
+            --text-primary: #f0f4f8;
+            --text-secondary: #8a99ad;
+            --font-mono: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        /* Top Navigation Bar */
+        header {
+            background: rgba(18, 21, 28, 0.85);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 16px 28px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .logo-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-badge {
+            background: linear-gradient(135deg, var(--accent-yellow), #ff9900);
+            color: #000;
+            font-weight: 900;
+            font-size: 13px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            letter-spacing: 1px;
+        }
+
+        .brand-title {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .brand-title span {
+            color: var(--accent-cyan);
+        }
+
+        .connection-group {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255, 0, 85, 0.15);
+            border: 1px solid rgba(255, 0, 85, 0.4);
+            color: var(--accent-red);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: all 0.3s ease;
+        }
+
+        .status-pill.connected {
+            background: rgba(0, 255, 136, 0.15);
+            border-color: rgba(0, 255, 136, 0.4);
+            color: var(--accent-green);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            box-shadow: 0 0 8px currentColor;
+        }
+
+        .ip-input {
+            background: #08090c;
+            border: 1px solid var(--border-color);
+            color: var(--text-primary);
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-family: var(--font-mono);
+            font-size: 13px;
+            width: 170px;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        .ip-input:focus {
+            border-color: var(--accent-cyan);
+        }
+
+        .btn-connect {
+            background: var(--accent-cyan);
+            color: #000;
+            border: none;
+            padding: 8px 18px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-connect:hover {
+            opacity: 0.9;
+            transform: translateY(-1px);
+            box-shadow: 0 0 12px rgba(0, 240, 255, 0.4);
+        }
+
+        /* Dashboard Main Layout */
+        main {
+            padding: 24px 28px;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        /* KPI Stat Cards */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 16px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 4px;
+            height: 100%;
+            background: var(--accent-cyan);
+        }
+
+        .stat-card.yellow::before { background: var(--accent-yellow); }
+        .stat-card.red::before { background: var(--accent-red); }
+        .stat-card.green::before { background: var(--accent-green); }
+
+        .stat-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: var(--text-secondary);
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 800;
+            font-family: var(--font-mono);
+            letter-spacing: -0.5px;
+        }
+
+        .stat-sub {
+            font-size: 12px;
+            color: var(--text-secondary);
+        }
+
+        /* Charts & Radar Grid */
+        .content-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 1100px) {
+            .content-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .panel-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .panel-title {
+            font-size: 15px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            color: var(--text-primary);
+        }
+
+        .chart-container {
+            height: 260px;
+            position: relative;
+            width: 100%;
+        }
+
+        /* Tactical Radar View */
+        .radar-box {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 280px;
+            background: #08090c;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            position: relative;
+        }
+
+        #radarCanvas {
+            max-width: 100%;
+            max-height: 100%;
+        }
+
+        /* Event Table */
+        .table-container {
+            overflow-x: auto;
+            max-height: 220px;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+
+        th {
+            text-align: left;
+            padding: 10px 14px;
+            background: #0d0f14;
+            color: var(--text-secondary);
+            font-size: 11px;
+            text-transform: uppercase;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        td {
+            padding: 10px 14px;
+            border-bottom: 1px solid rgba(35, 42, 56, 0.5);
+            font-family: var(--font-mono);
+        }
+
+        .tag-pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            background: rgba(0, 240, 255, 0.15);
+            color: var(--accent-cyan);
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <div class="logo-group">
+            <div class="logo-badge">MONSTER</div>
+            <div class="brand-title">ZENITH <span>ENGINE</span> TELEMETRY</div>
+        </div>
+
+        <div class="connection-group">
+            <div id="statusPill" class="status-pill">
+                <div class="status-dot"></div>
+                <span id="statusText">DISCONNECTED</span>
+            </div>
+            <input type="text" id="ipAddress" class="ip-input" value="192.168.1.100:8080" placeholder="phone-ip:8080">
+            <button id="btnToggleConnect" class="btn-connect" onclick="toggleConnection()">CONNECT</button>
+        </div>
+    </header>
+
+    <main>
+        <!-- KPI Row -->
+        <section class="kpi-grid">
+            <div class="stat-card green">
+                <div class="stat-label">In-Game FPS</div>
+                <div id="valFps" class="stat-value">--</div>
+                <div class="stat-sub">Display Target: 120 Hz</div>
+            </div>
+
+            <div class="stat-card">
+                <div class="stat-label">Snapdragon NPU Latency</div>
+                <div id="valNpu" class="stat-value">-- ms</div>
+                <div class="stat-sub">Hexagon HTP INT8 Mode</div>
+            </div>
+
+            <div class="stat-card yellow">
+                <div class="stat-label">Thermal State</div>
+                <div id="valThermal" class="stat-value">--</div>
+                <div class="stat-sub">Battery Temp: <span id="valBattery">--</span>°C</div>
+            </div>
+
+            <div class="stat-card red">
+                <div class="stat-label">Active Targets</div>
+                <div id="valTargets" class="stat-value">0</div>
+                <div class="stat-sub">Spatial HUD Bounding Boxes</div>
+            </div>
+        </section>
+
+        <!-- Charts & Tactical Grid -->
+        <div class="content-grid">
+            <div class="panel-card">
+                <div class="panel-header">
+                    <div class="panel-title">LIVE FPS & NPU LATENCY TIMELINE</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="telemetryChart"></canvas>
+                </div>
+            </div>
+
+            <div class="panel-card">
+                <div class="panel-header">
+                    <div class="panel-title">TACTICAL 2D RADAR (640x640)</div>
+                </div>
+                <div class="radar-box">
+                    <canvas id="radarCanvas" width="260" height="260"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <!-- Detection Events Feed -->
+        <div class="panel-card">
+            <div class="panel-header">
+                <div class="panel-title">NPU REAL-TIME DETECTION FEED</div>
+            </div>
+            <div class="table-container">
+                <table id="detectionTable">
+                    <thead>
+                        <tr>
+                            <th>Time</th>
+                            <th>Entity Class</th>
+                            <th>Confidence</th>
+                            <th>Bounding Box [X1, Y1, X2, Y2]</th>
+                        </tr>
+                    </thead>
+                    <tbody id="detectionTableBody">
+                        <tr>
+                            <td colspan="4" style="text-align: center; color: var(--text-secondary);">Awaiting telemetry stream...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        let socket = null;
+        let chartInstance = null;
+        const maxPoints = 50;
+
+        const timeLabels = [];
+        const fpsData = [];
+        const npuData = [];
+
+        function initChart() {
+            const ctx = document.getElementById('telemetryChart').getContext('2d');
+            chartInstance = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: timeLabels,
+                    datasets: [
+                        {
+                            label: 'FPS',
+                            data: fpsData,
+                            borderColor: '#00ff88',
+                            backgroundColor: 'rgba(0, 255, 136, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            yAxisID: 'yFps',
+                            pointRadius: 0
+                        },
+                        {
+                            label: 'NPU Latency (ms)',
+                            data: npuData,
+                            borderColor: '#00f0ff',
+                            backgroundColor: 'rgba(0, 240, 255, 0.1)',
+                            borderWidth: 2,
+                            tension: 0.3,
+                            yAxisID: 'yNpu',
+                            pointRadius: 0
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {
+                        x: {
+                            grid: { color: '#1c222e' },
+                            ticks: { color: '#8a99ad', font: { family: 'monospace' } }
+                        },
+                        yFps: {
+                            type: 'linear',
+                            position: 'left',
+                            min: 0,
+                            max: 144,
+                            grid: { color: '#1c222e' },
+                            ticks: { color: '#00ff88' }
+                        },
+                        yNpu: {
+                            type: 'linear',
+                            position: 'right',
+                            min: 0,
+                            max: 20,
+                            grid: { drawOnChartArea: false },
+                            ticks: { color: '#00f0ff' }
+                        }
+                    },
+                    plugins: {
+                        legend: { labels: { color: '#f0f4f8' } }
+                    }
+                }
+            });
+        }
+
+        function toggleConnection() {
+            if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+                socket.close();
+            } else {
+                connectWebSocket();
+            }
+        }
+
+        function connectWebSocket() {
+            const ip = document.getElementById('ipAddress').value.trim();
+            const statusPill = document.getElementById('statusPill');
+            const statusText = document.getElementById('statusText');
+            const btn = document.getElementById('btnToggleConnect');
+
+            try {
+                socket = new WebSocket(`ws://${ip}`);
+
+                socket.onopen = () => {
+                    statusPill.classList.add('connected');
+                    statusText.innerText = 'STREAMING LIVE';
+                    btn.innerText = 'DISCONNECT';
+                    btn.style.background = '#ff0055';
+                    btn.style.color = '#fff';
+                };
+
+                socket.onclose = () => {
+                    statusPill.classList.remove('connected');
+                    statusText.innerText = 'DISCONNECTED';
+                    btn.innerText = 'CONNECT';
+                    btn.style.background = '#00f0ff';
+                    btn.style.color = '#000';
+                };
+
+                socket.onerror = () => {
+                    statusPill.classList.remove('connected');
+                    statusText.innerText = 'ERROR';
+                };
+
+                socket.onmessage = (event) => {
+                    try {
+                        const payload = JSON.parse(event.data);
+                        handleTelemetryPayload(payload);
+                    } catch (e) {
+                        console.error('Failed to parse telemetry', e);
+                    }
+                };
+            } catch (err) {
+                alert('Invalid WebSocket URL format');
+            }
+        }
+
+        function handleTelemetryPayload(data) {
+            // Update Stat Cards
+            document.getElementById('valFps').innerText = Math.round(data.fps || 0);
+            document.getElementById('valNpu').innerText = (data.npuLatencyMs || 0).toFixed(1) + ' ms';
+            document.getElementById('valThermal').innerText = data.thermalStatus || 'NOMINAL';
+            document.getElementById('valBattery').innerText = (data.batteryTemp || 0).toFixed(1);
+            document.getElementById('valTargets').innerText = data.detections ? data.detections.length : 0;
+
+            // Update Chart
+            const now = new Date(data.timestamp || Date.now());
+            const timeStr = `${now.getMinutes()}:${String(now.getSeconds()).padStart(2, '0')}`;
+
+            timeLabels.push(timeStr);
+            fpsData.push(data.fps || 0);
+            npuData.push(data.npuLatencyMs || 0);
+
+            if (timeLabels.length > maxPoints) {
+                timeLabels.shift();
+                fpsData.shift();
+                npuData.shift();
+            }
+
+            if (chartInstance) chartInstance.update();
+
+            // Render Radar View
+            drawRadar(data.detections || []);
+
+            // Update Table
+            updateDetectionTable(data.detections || []);
+        }
+
+        function drawRadar(detections) {
+            const canvas = document.getElementById('radarCanvas');
+            const ctx = canvas.getContext('2d');
+            const w = canvas.width;
+            const h = canvas.height;
+
+            ctx.clearRect(0, 0, w, h);
+
+            // Draw radar grid rings
+            ctx.strokeStyle = 'rgba(0, 240, 255, 0.2)';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.arc(w/2, h/2, w * 0.45, 0, Math.PI * 2);
+            ctx.arc(w/2, h/2, w * 0.30, 0, Math.PI * 2);
+            ctx.arc(w/2, h/2, w * 0.15, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Crosshairs
+            ctx.beginPath();
+            ctx.moveTo(w/2, 0); ctx.lineTo(w/2, h);
+            ctx.moveTo(0, h/2); ctx.lineTo(w, h/2);
+            ctx.stroke();
+
+            // Draw Target Blips
+            detections.forEach(d => {
+                const nx = (d.x1 + d.x2) / 2 / 640;
+                const ny = (d.y1 + d.y2) / 2 / 640;
+
+                const bx = nx * w;
+                const by = ny * h;
+
+                ctx.fillStyle = '#ffe600';
+                ctx.beginPath();
+                ctx.arc(bx, by, 4, 0, Math.PI * 2);
+                ctx.fill();
+
+                ctx.strokeStyle = '#ffe600';
+                ctx.beginPath();
+                ctx.arc(bx, by, 8, 0, Math.PI * 2);
+                ctx.stroke();
+            });
+        }
+
+        function updateDetectionTable(detections) {
+            const tbody = document.getElementById('detectionTableBody');
+            if (!detections || detections.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color: var(--text-secondary);">No targets in FOV</td></tr>';
+                return;
+            }
+
+            let html = '';
+            detections.slice(0, 8).forEach(d => {
+                html += `<tr>
+                    <td>${new Date().toLocaleTimeString()}</td>
+                    <td><span class="tag-pill">Class ${d.classId}</span></td>
+                    <td style="color: var(--accent-green); font-weight: 700;">${(d.score * 100).toFixed(1)}%</td>
+                    <td>[${Math.round(d.x1)}, ${Math.round(d.y1)}, ${Math.round(d.x2)}, ${Math.round(d.y2)}]</td>
+                </tr>`;
+            });
+            tbody.innerHTML = html;
+        }
+
+        window.onload = () => {
+            initChart();
+            drawRadar([]);
+        };
+    </script>
+</body>
+</html>
