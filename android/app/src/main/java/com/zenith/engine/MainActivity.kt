@@ -3,7 +3,10 @@ package com.zenith.engine
 import android.content.Context
 import android.content.Intent
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -17,12 +20,12 @@ class MainActivity : AppCompatActivity() {
     ) { result ->
         if (result.resultCode == RESULT_OK && result.data != null) {
             val serviceIntent = Intent(this, ScreenCaptureService::class.java).apply {
-                action = "START_CAPTURE"
-                putExtra("RESULT_CODE", result.resultCode)
-                putExtra("DATA_INTENT", result.data) // Passed as explicit intent parcelable
+                action = ScreenCaptureService.ACTION_START
+                putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
+                putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
             }
             startForegroundService(serviceIntent)
-            finish() // Minimizes main activity so overlay draws over home/other apps
+            finish()
         }
     }
 
@@ -35,6 +38,16 @@ class MainActivity : AppCompatActivity() {
             setPadding(50, 50, 50, 50)
         }
         setContentView(textView)
+
+        // Request Overlay permission first if not granted
+        if (!Settings.canDrawOverlays(this)) {
+            val intent = Intent(
+                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                Uri.parse("package:$packageName")
+            )
+            startActivity(intent)
+            return
+        }
 
         if (!hasRequestedProjection) {
             hasRequestedProjection = true

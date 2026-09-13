@@ -80,6 +80,7 @@ class ScreenCaptureService : Service() {
     private var imageReaderHandler: Handler? = null
 
     private var zenithDetector: ZenithDetector? = null
+    private var overlayHudView: OverlayHudView? = null
 
     // Concurrency control: Discards incoming frames when inference engine is busy
     private val isInferring = AtomicBoolean(false)
@@ -215,6 +216,18 @@ class ScreenCaptureService : Service() {
         )
 
         Log.i(TAG, "MediaProjection VirtualDisplay established [640x640@${screenDensity}dpi].")
+
+        // Display floating HUD overlay view on screen
+        try {
+            if (overlayHudView == null) {
+                overlayHudView = OverlayHudView(applicationContext).apply {
+                    show()
+                }
+                Log.i(TAG, "OverlayHudView successfully displayed on screen.")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to attach OverlayHudView: ${e.message}", e)
+        }
     }
 
     /**
@@ -268,6 +281,9 @@ class ScreenCaptureService : Service() {
     }
 
     private fun stopCapture() {
+        overlayHudView?.dismiss()
+        overlayHudView = null
+
         virtualDisplay?.release()
         virtualDisplay = null
 
