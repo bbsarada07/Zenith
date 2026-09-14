@@ -10,7 +10,11 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
 import android.graphics.PixelFormat
+import android.graphics.RectF
 import android.hardware.display.DisplayManager
 import android.hardware.display.VirtualDisplay
 import android.media.Image
@@ -43,22 +47,24 @@ import kotlinx.coroutines.launch
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentLinkedDeque
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * ScreenCaptureService: Central Hub for Real-Time AI Spatial Co-Pilot & Web Command Streaming.
+ * ScreenCaptureService: Master Orchestrator for Real-Time AI Spatial Co-Pilot & Web Command Streaming.
  *
  * System Architecture:
  * 1. VirtualDisplay Stream Isolation: Dedicated 'ScreenStreamThread' HandlerThread for MediaProjection ingestion.
- * 2. Keyframe Ring-Buffer: Bounded 3-frame rolling queue downsampled to 720p/640p at 15 FPS (~66ms interval)
+ * 2. Keyframe Ring-Buffer: Bounded 3-frame rolling queue downsampled to 720p/640p at 24-30 FPS (~33-40ms interval)
  *    preventing heap bloat while maintaining OCR text clarity.
  * 3. Autonomous Reasoning: AutoContextAnalyzer runs perceptual hashing (pHash) on keyframes to trigger deep
  *    inference only on significant screen transitions.
  * 4. Multi-Modal Control: Floating ZenithControlHUD capsule (Mic hold-to-speak, Vision Lock, Stealth Opacity).
  * 5. Spatial Canvas Overlay: Hardware-accelerated ZenithCanvasView with pinch-zoom, pan, docking, and ghost suggestions.
  * 6. Tiered Dual Inference: Ultra-low latency local Qualcomm QNN/NNAPI NPU detector with asynchronous Cloud Vision LLM fallback.
- * 7. Multi-Device Web Streaming: Embedded Ktor WebSocket server (ZenithStreamServer on port 8080) broadcasting live frames & telemetry.
+ * 7. Multi-Device Web Streaming & ML Kit Vision: Embedded Ktor WebSocket server (ZenithStreamServer on port 8080)
+ *    broadcasting live frames & on-demand ML Kit OCR text extractions.
  */
 class ScreenCaptureService : Service() {
 
@@ -76,8 +82,27 @@ class ScreenCaptureService : Service() {
         const val ACTION_DETECTIONS_BROADCAST = "com.zenith.engine.DETECTIONS_UPDATED"
         const val EXTRA_DETECTION_COUNT = "extra_detection_count"
 
-        // Frame Pacing: 15 FPS Max (~66ms interval) for optimal balance of latency & thermal efficiency
-        private const val TARGET_FPS = 15
+        // Zero-Trust Privacy Masking Registry: redacts sensitive bounding boxes
+        val activePrivacyMasks = CopyOnWriteArrayList<RectF>()
+
+        fun addPrivacyMask(rect: RectF) {
+            activePrivacyMasks.add(rect)
+            Log.i(TAG, "Privacy mask added: $rect (Total: ${activePrivacyMasks.size})")
+        }
+
+        fun removePrivacyMask(rect: RectF) {
+            activePrivacyMasks.remove(rect)
+        }
+
+        fun clearPrivacyMasks() {
+            activePrivacyMasks.clear()
+            Log.i(TAG, "All privacy masks cleared.")
+        }
+
+        fun getPrivacyMaskCount(): Int = activePrivacyMasks.size
+
+        // Frame Pacing: 25-30 FPS (~33ms interval) for fluid real-time web mirror
+        private const val TARGET_FPS = 25
         private const val MIN_FRAME_INTERVAL_MS = 1000L / TARGET_FPS
         private const val MAX_RING_BUFFER_SIZE = 3
 
@@ -120,8 +145,11 @@ class ScreenCaptureService : Service() {
     // Keyframe Ring Buffer (Rolling window of last 3 frames for zero heap bloat)
     private val keyframeRingBuffer = ConcurrentLinkedDeque<Bitmap>()
 
-    // Reusable byte array output stream for JPEG compression on screenStreamThread (reduces GC pressure)
-    private val jpegCompressionBuffer = ByteArrayOutputStream(64 * 1024)
+    // Reusable byte array output stream for JPEG compression (reduces GC pressure during 30 FPS ingestion)
+    private val jpegCompressionBuffer = ByteArrayOutputStream(128 * 1024)
+
+    // Adaptive Stream Quality State (scales dynamically between 35% and 75%)
+    @Volatile private var currentAdaptiveQuality: Int = 65
 
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -150,9 +178,13 @@ class ScreenCaptureService : Service() {
             Log.e(TAG, "Error initializing intelligence engines: ${e.message}", e)
         }
 
-        // 3. Instantiate ZenithStreamServer (Port 8080)
+        // 3. Instantiate ZenithStreamServer (Port 8080) with ML Kit Frame Provider
         try {
-            zenithStreamServer = ZenithStreamServer(context = this, port = 8080).apply {
+            zenithStreamServer = ZenithStreamServer(
+                context = this,
+                port = 8080,
+                latestFrameProvider = { keyframeRingBuffer.peekLast() }
+            ).apply {
                 eventListener = object : ZenithStreamServer.ServerEventListener {
                     override fun onRemoteTouchReceived(normalizedX: Float, normalizedY: Float) {
                         ZenithAccessibilityService.performTap(normalizedX, normalizedY)
@@ -170,9 +202,13 @@ class ScreenCaptureService : Service() {
                             dispatchDeepReasoningPipeline(latestKeyframe, prompt)
                         }
                     }
+
+                    override fun onOcrCompleted(fullText: String, blockCount: Int) {
+                        Log.d(TAG, "OCR result sent to web dashboard: $blockCount blocks.")
+                    }
                 }
             }
-            Log.i(TAG, "ZenithStreamServer instantiated on port 8080.")
+            Log.i(TAG, "ZenithStreamServer initialized on port 8080.")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to instantiate ZenithStreamServer: ${e.message}", e)
         }
@@ -267,11 +303,16 @@ class ScreenCaptureService : Service() {
         @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getRealMetrics(metrics)
         val screenDensity = metrics.densityDpi
+        val screenWidth = metrics.widthPixels
+        val screenHeight = metrics.heightPixels
 
-        // Configure ImageReader for 640x640 / 720p tensor space
+        // Sync native dimensions with WebSocket stream telemetry
+        zenithStreamServer?.updateScreenDimensions(screenWidth, screenHeight)
+
+        // Configure Stride-Safe ImageReader with RGBA_8888 and double buffering
         val reader = ImageReader.newInstance(
-            ZenithDetector.INPUT_WIDTH,
-            ZenithDetector.INPUT_HEIGHT,
+            screenWidth,
+            screenHeight,
             PixelFormat.RGBA_8888,
             2
         )
@@ -283,8 +324,8 @@ class ScreenCaptureService : Service() {
 
         virtualDisplay = projection.createVirtualDisplay(
             "ZenithSpatialVirtualDisplay",
-            ZenithDetector.INPUT_WIDTH,
-            ZenithDetector.INPUT_HEIGHT,
+            screenWidth,
+            screenHeight,
             screenDensity,
             DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
             reader.surface,
@@ -292,7 +333,7 @@ class ScreenCaptureService : Service() {
             screenStreamHandler
         )
 
-        Log.i(TAG, "VirtualDisplay linked with Public flag [640x640@${screenDensity}dpi].")
+        Log.i(TAG, "VirtualDisplay linked [${screenWidth}x${screenHeight}@${screenDensity}dpi].")
 
         // Attach Floating Overlays (HUD Capsule & Spatial Canvas)
         mainHandler.post {
@@ -396,22 +437,23 @@ class ScreenCaptureService : Service() {
     }
 
     /**
-     * Synchronous Stream Pipeline:
-     * - Rate-limits to 15 FPS (~66ms interval).
-     * - Discards frames immediately if Vision Lock is engaged or previous NPU cycle is in flight.
-     * - Manages keyframe ring buffer without memory leakage.
-     * - Executes local NPU detection synchronously on ScreenStreamThread.
-     * - Compresses frame to JPEG with reusable buffer and broadcasts via ZenithStreamServer.
+     * Stride-Safe Synchronous Stream Pipeline:
+     * - Rate-limits to 25-30 FPS.
+     * - Discards frames immediately if Vision Lock is engaged.
+     * - Safely swallows hardware row stride padding.
+     * - Smoothly downscales frame to 720p preserving exact aspect ratio.
+     * - Compresses frame using dynamic adaptive quality (35% - 75%).
+     * - Broadcasts binary frame and telemetry metrics immediately.
      */
     private fun onImageAvailable(reader: ImageReader) {
         val currentTimeMs = SystemClock.elapsedRealtime()
         val lastTimeMs = lastFrameTimestampMs.get()
 
-        // 1. Frame Pacing Check (15 FPS Limit)
+        // 1. Frame Pacing Check (25-30 FPS limit)
         if (currentTimeMs - lastTimeMs < MIN_FRAME_INTERVAL_MS) {
             val dropped = reader.acquireLatestImage() ?: return
             try {
-                // Drop early to prevent buffer queue buildup
+                // Drop early
             } finally {
                 dropped.close()
             }
@@ -429,66 +471,109 @@ class ScreenCaptureService : Service() {
             return
         }
 
-        // 3. Acquire latest image frame
+        // 3. Acquire latest image frame safely
         val image = reader.acquireLatestImage() ?: return
-
-        // 4. Overlap inference prevention
-        if (!isInferring.compareAndSet(false, true)) {
-            try {
-                // Drop frame during active inference
-            } finally {
-                image.close()
-            }
-            return
-        }
-
         lastFrameTimestampMs.set(currentTimeMs)
 
         try {
             if (image.planes.isNotEmpty()) {
                 val plane = image.planes[0]
                 val buffer = plane.buffer
+                val pixelStride = plane.pixelStride
+                val rowStride = plane.rowStride
+                val width = image.width
+                val height = image.height
+                val rowPadding = rowStride - pixelStride * width
+                val paddedWidth = width + rowPadding / pixelStride
 
-                // Run Local NPU Detection synchronously on ScreenStreamThread
-                val detections = dualInferenceEngine?.executeLocalDetection(
-                    planeBuffer = buffer,
-                    rowStride = plane.rowStride,
-                    pixelStride = plane.pixelStride,
-                    width = image.width,
-                    height = image.height
-                ) ?: emptyList()
+                // 1. Create temporary padded bitmap to safely swallow row stride padding
+                val paddedBitmap = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
+                paddedBitmap.copyPixelsFromBuffer(buffer)
 
-                // Generate downsampled Bitmap keyframe for ring-buffer & visual reasoning
-                val keyframeBitmap = extractBitmapFromPlane(plane, image.width, image.height)
-                updateRingBuffer(keyframeBitmap)
-
-                // Compress frame to JPEG using reusable stream on screenStreamThread
-                jpegCompressionBuffer.reset()
-                keyframeBitmap.compress(Bitmap.CompressFormat.JPEG, 70, jpegCompressionBuffer)
-                val jpegBytes = jpegCompressionBuffer.toByteArray()
-
-                // Broadcast frame and live telemetry to Web Command Center
-                zenithStreamServer?.broadcastFrame(jpegBytes)
-                zenithStreamServer?.broadcastTelemetry(
-                    fps = 15.0f,
-                    npuLatencyMs = 4.2f,
-                    detections = detections
-                )
-
-                // Dispatch autonomous frame evaluation on background worker
-                serviceScope.launch(Dispatchers.Default) {
-                    autoContextAnalyzer?.evaluateFrame(keyframeBitmap)
+                // 2. Crop out stride padding to get exact frame dimensions
+                val cleanBitmap = Bitmap.createBitmap(paddedBitmap, 0, 0, width, height)
+                if (paddedBitmap != cleanBitmap) {
+                    paddedBitmap.recycle()
                 }
 
-                // Broadcast local detections flow
+                // 3. ZERO-TRUST PRIVACY MASKING: Redact sensitive UI regions before transmission
+                if (activePrivacyMasks.isNotEmpty()) {
+                    val canvas = Canvas(cleanBitmap)
+                    val paint = Paint().apply {
+                        color = Color.BLACK
+                        style = Paint.Style.FILL
+                    }
+                    for (maskRect in activePrivacyMasks) {
+                        canvas.drawRect(maskRect, paint)
+                    }
+                }
+
+                // 4. Smoothly downscale frame to target height (720p) maintaining exact aspect ratio
+                val scaleFactor = 720f / height.toFloat()
+                val targetWidth = (width * scaleFactor).toInt()
+                val targetHeight = 720
+                val scaledBitmap = if (height > 720) {
+                    Bitmap.createScaledBitmap(cleanBitmap, targetWidth, targetHeight, true).also {
+                        if (it != cleanBitmap) cleanBitmap.recycle()
+                    }
+                } else {
+                    cleanBitmap
+                }
+
+                // Update Keyframe Ring Buffer (holds clean downscaled frames)
+                updateRingBuffer(scaledBitmap)
+
+                // 4. Run local detection if not currently inferring
+                var detections: List<ZenithDetector.Detection> = emptyList()
+                var npuDurationMs = 4.2f
+                if (isInferring.compareAndSet(false, true)) {
+                    try {
+                        val npuStart = SystemClock.elapsedRealtime()
+                        detections = dualInferenceEngine?.executeLocalDetection(
+                            planeBuffer = buffer,
+                            rowStride = rowStride,
+                            pixelStride = pixelStride,
+                            width = width,
+                            height = height
+                        ) ?: emptyList()
+                        npuDurationMs = (SystemClock.elapsedRealtime() - npuStart).toFloat().coerceAtLeast(1.0f)
+                    } finally {
+                        isInferring.set(false)
+                    }
+                }
+
+                // 5. Compress to JPEG with dynamic adaptive quality
+                jpegCompressionBuffer.reset()
+                scaledBitmap.compress(Bitmap.CompressFormat.JPEG, currentAdaptiveQuality, jpegCompressionBuffer)
+                val jpegBytes = jpegCompressionBuffer.toByteArray()
+
+                // 6. Immediately broadcast frame to Web Command Center
+                zenithStreamServer?.broadcastFrame(jpegBytes)
+                val frameLatencyMs = SystemClock.elapsedRealtime() - currentTimeMs
+                zenithStreamServer?.recordMetrics(frameLatencyMs, npuDurationMs, detections)
+
+                // Dynamic Adaptive Quality Management (35% to 75%)
+                if (frameLatencyMs > 60) {
+                    currentAdaptiveQuality = maxOf(35, currentAdaptiveQuality - 3)
+                } else if (frameLatencyMs < 35) {
+                    currentAdaptiveQuality = minOf(75, currentAdaptiveQuality + 1)
+                }
+
+                // 7. Autonomous visual reasoning trigger evaluation
+                serviceScope.launch(Dispatchers.Default) {
+                    autoContextAnalyzer?.evaluateFrame(scaledBitmap)
+                }
+
+                // 8. Broadcast local detections flow
                 serviceScope.launch {
                     _detectionsFlow.emit(detections)
                 }
 
-                // Dispatch UI updates safely to the Main UI Thread
+                // 9. Dispatch UI updates safely to the Main UI Thread
                 mainHandler.post {
-                    zenithCanvasView?.updatePreviewKeyframe(keyframeBitmap)
+                    zenithCanvasView?.updatePreviewKeyframe(scaledBitmap)
                     zenithCanvasView?.updateDetections(detections)
+                    overlayHudView?.npuLatencyMs = npuDurationMs
                     overlayHudView?.updateDetections(detections)
                 }
 
@@ -502,7 +587,6 @@ class ScreenCaptureService : Service() {
             Log.e(TAG, "Stream pipeline execution error: ${e.message}", e)
         } finally {
             image.close()
-            isInferring.set(false)
         }
     }
 
@@ -538,7 +622,7 @@ class ScreenCaptureService : Service() {
                     is DualInferenceEngine.DeepReasoningState.InProgress -> {
                         Log.d(TAG, "Deep Reasoning: ${state.step}")
                         zenithStreamServer?.broadcastTelemetry(
-                            fps = 15.0f,
+                            fps = 25.0f,
                             npuLatencyMs = 4.2f,
                             detections = emptyList(),
                             logMessage = state.step
@@ -546,7 +630,7 @@ class ScreenCaptureService : Service() {
                     }
                     is DualInferenceEngine.DeepReasoningState.Success -> {
                         zenithStreamServer?.broadcastTelemetry(
-                            fps = 15.0f,
+                            fps = 25.0f,
                             npuLatencyMs = state.result.latencyMs.toFloat(),
                             detections = state.result.detections,
                             logMessage = "Insight: ${state.result.title} — ${state.result.summary}"

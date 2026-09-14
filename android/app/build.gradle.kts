@@ -50,6 +50,12 @@ dependencies {
     // ONNX Runtime Android
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 
+    // Google ML Kit Text Recognition (On-Device OCR & Vision Intelligence)
+    implementation("com.google.mlkit:text-recognition:16.0.0")
+
+    // ZXing QR Code Generation for Instant Pairing
+    implementation("com.google.zxing:core:3.5.3")
+
     // High-Throughput Embedded WebSocket Server for Telemetry
     implementation("org.java-websocket:Java-WebSocket:1.5.7")
 

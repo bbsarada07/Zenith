@@ -1,8 +1,12 @@
 package com.zenith.engine
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import kotlinx.coroutines.CoroutineScope
@@ -13,22 +17,19 @@ import kotlinx.coroutines.launch
 import org.java_websocket.WebSocket
 import org.java_websocket.handshake.ClientHandshake
 import org.java_websocket.server.WebSocketServer
+import org.json.JSONObject
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.NetworkInterface
 import java.util.Collections
 
 /**
- * OfficeKitBridge: Embedded High-Throughput WebSocket Telemetry Server.
+ * OfficeKitBridge: Embedded High-Throughput WebSocket Telemetry & Cross-Device Office Kit Bridge.
  *
- * Streams real-time esports telemetry directly from iQOO device to PC/Laptop secondary monitors
- * over local Wi-Fi / USB reverse tethering (port 8080).
- *
- * Payload features:
- * - Real-time FPS & frame pacing delta
- * - Qualcomm Hexagon NPU inference latency
- * - Snapdragon CPU/GPU thermal status
- * - Live bounding boxes / target detection coordinates
+ * Capabilities:
+ * 1. Streams real-time esports telemetry directly from iQOO device to PC/Laptop secondary monitors.
+ * 2. Cross-Device Clipboard Syncing: Listens for system clipboard changes and broadcasts across devices.
+ * 3. Remote Text Injection: Direct focus-field text injection via Android Accessibility Node actions.
  */
 class OfficeKitBridge(
     private val context: Context,
@@ -40,10 +41,49 @@ class OfficeKitBridge(
     }
 
     private val bridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val mainHandler = Handler(Looper.getMainLooper())
     private var serverInstance: InternalWebSocketServer? = null
+    private val clipboardManager = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    private var lastCopiedText: String = ""
+
+    private val clipListener = ClipboardManager.OnPrimaryClipChangedListener {
+        val clip = clipboardManager.primaryClip
+        if (clip != null && clip.itemCount > 0) {
+            val text = clip.getItemAt(0).text?.toString() ?: ""
+            if (text.isNotEmpty() && text != lastCopiedText) {
+                lastCopiedText = text
+                broadcastClipboardSync(text)
+                Log.i(TAG, "Local clipboard change captured & synced ($text)")
+            }
+        }
+    }
 
     init {
         initializeServer()
+        mainHandler.post {
+            clipboardManager.addPrimaryClipChangedListener(clipListener)
+        }
+    }
+
+    /**
+     * Broadcasts cross-device clipboard text update to all connected PC/Dashboard clients.
+     */
+    fun broadcastClipboardSync(text: String) {
+        val server = serverInstance ?: return
+        if (server.connections.isEmpty()) return
+
+        bridgeScope.launch {
+            try {
+                val json = JSONObject().apply {
+                    put("type", "clipboard_sync")
+                    put("text", text)
+                    put("timestamp", System.currentTimeMillis())
+                }
+                server.broadcast(json.toString())
+            } catch (e: Exception) {
+                Log.w(TAG, "Clipboard sync broadcast failed: ${e.message}")
+            }
+        }
     }
 
     private fun initializeServer() {

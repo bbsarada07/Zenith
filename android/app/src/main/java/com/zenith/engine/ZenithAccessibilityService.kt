@@ -12,7 +12,7 @@ import android.view.accessibility.AccessibilityEvent
  * ZenithAccessibilityService: High-Precision Remote Touch & Gesture Dispatcher.
  *
  * Receives normalized viewport coordinates (0.0 to 1.0) from the local WebSocket streaming server
- * and injects native taps and gestures across the Android OS.
+ * and injects native taps and swipe gestures across the Android OS.
  */
 class ZenithAccessibilityService : AccessibilityService() {
 
@@ -32,7 +32,7 @@ class ZenithAccessibilityService : AccessibilityService() {
          */
         fun performTap(normX: Float, normY: Float) {
             val service = instance ?: run {
-                Log.w(TAG, "ZenithAccessibilityService not enabled or instance is null. Cannot perform tap.")
+                Log.w(TAG, "ZenithAccessibilityService is not enabled or instance is null. Cannot perform tap.")
                 return
             }
 
@@ -63,6 +63,8 @@ class ZenithAccessibilityService : AccessibilityService() {
             }, null)
         }
 
+        fun injectTap(normX: Float, normY: Float) = performTap(normX, normY)
+
         /**
          * Dispatches a native swipe gesture between normalized screen coordinates.
          */
@@ -71,9 +73,12 @@ class ZenithAccessibilityService : AccessibilityService() {
             startY: Float,
             endX: Float,
             endY: Float,
-            durationMs: Long = 200L
+            durationMs: Long = 250L
         ) {
-            val service = instance ?: return
+            val service = instance ?: run {
+                Log.w(TAG, "ZenithAccessibilityService is not enabled. Cannot perform swipe.")
+                return
+            }
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
 
             val metrics = service.resources.displayMetrics
@@ -91,6 +96,54 @@ class ZenithAccessibilityService : AccessibilityService() {
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
 
             service.dispatchGesture(gesture, null, null)
+            Log.d(TAG, "Remote swipe dispatched from ($x1, $y1) to ($x2, $y2)")
+        }
+
+        fun injectSwipe(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long = 250L) =
+            performSwipe(startX, startY, endX, endY, durationMs)
+
+        /**
+         * Dispatches system global actions (BACK, HOME, RECENTS, NOTIFICATIONS, QUICK_SETTINGS).
+         */
+        fun performGlobalAction(actionId: Int): Boolean {
+            val service = instance ?: run {
+                Log.w(TAG, "ZenithAccessibilityService is null. Cannot perform global action $actionId.")
+                return false
+            }
+            val result = service.performGlobalAction(actionId)
+            Log.i(TAG, "Global action $actionId executed (Result: $result)")
+            return result
+        }
+
+        fun injectGlobalAction(actionId: Int): Boolean = performGlobalAction(actionId)
+
+        /**
+         * Injects text directly into the actively focused input field via Accessibility Node Action.
+         */
+        fun injectTextToFocus(text: String): Boolean {
+            val service = instance ?: return false
+            try {
+                val root = service.rootInActiveWindow ?: return false
+                val focusedNode = root.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
+                    ?: root.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+                    ?: return false
+
+                val arguments = android.os.Bundle().apply {
+                    putCharSequence(
+                        android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        text
+                    )
+                }
+                val success = focusedNode.performAction(
+                    android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,
+                    arguments
+                )
+                Log.i(TAG, "injectTextToFocus executed (Success: $success, Text: $text)")
+                return success
+            } catch (e: Exception) {
+                Log.e(TAG, "Error injecting text to focus field: ${e.message}", e)
+                return false
+            }
         }
     }
 
@@ -107,7 +160,7 @@ class ZenithAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Event processing for window and text change notifications if needed
+        // Accessibility events
     }
 
     override fun onInterrupt() {
