@@ -69,11 +69,6 @@ class ZenithStreamServer(
     private var ktorServer: ApplicationEngine? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // On-Device ML Kit Text Recognizer
-    private val textRecognizer by lazy {
-        TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
-    }
-
     // Thread-safe set of connected WebSocket stream sessions
     private val streamSessions = Collections.newSetFromMap(ConcurrentHashMap<WebSocketSession, Boolean>())
     // Thread-safe set of connected WebSocket control sessions
@@ -202,12 +197,14 @@ class ZenithStreamServer(
         }
     }
 
-    // Macro & Voice Automation Engines
+    // Vision, Voice & Macro Automation Engines
+    val spatialVisionEngine by lazy { SpatialVisionEngine() }
     val macroEngine by lazy { MacroEngine(frameProvider = latestFrameProvider) }
-    val voiceControlService by lazy {
-        VoiceControlService(
+    val voiceControlEngine by lazy {
+        VoiceControlEngine(
             context = context,
             frameProvider = latestFrameProvider,
+            spatialVisionEngine = spatialVisionEngine,
             eventBroadcaster = { transcript, action, executed ->
                 val voiceJson = JSONObject().apply {
                     put("type", "voice_command")
@@ -425,7 +422,7 @@ class ZenithStreamServer(
                     })
                 }
 
-                "macro_play" -> {
+                "macro_play", "play_macro" -> {
                     val macroJson = json.optString("macro_json", "")
                     val selfHealing = json.optBoolean("self_healing", true)
                     macroEngine.playMacro(macroJson, enableSelfHealing = selfHealing) { stepNum, total, desc ->
@@ -443,7 +440,7 @@ class ZenithStreamServer(
                 }
 
                 "voice_start", "voice_listen" -> {
-                    voiceControlService.startListening()
+                    voiceControlEngine.startListening()
                     broadcastJson(JSONObject().apply {
                         put("type", "voice_status")
                         put("isListening", true)
@@ -451,7 +448,7 @@ class ZenithStreamServer(
                 }
 
                 "voice_stop" -> {
-                    voiceControlService.stopListening()
+                    voiceControlEngine.stopListening()
                     broadcastJson(JSONObject().apply {
                         put("type", "voice_status")
                         put("isListening", false)
@@ -465,12 +462,12 @@ class ZenithStreamServer(
                     }
                 }
 
-                "ocr", "extract_text" -> {
+                "scan_ocr", "ocr", "extract_text" -> {
                     processOnDeviceOcr(session)
                 }
 
                 "clipboard", "set_clipboard" -> {
-                    val text = json.optString("text", "")
+                    val text = if (json.has("content")) json.optString("content", "") else json.optString("text", "")
                     if (text.isNotEmpty()) {
                         mainHandler.post {
                             val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
@@ -494,7 +491,7 @@ class ZenithStreamServer(
     }
 
     /**
-     * Performs Google ML Kit Text Recognition with Regex Sensitive Redaction & Intent Parsing.
+     * Performs Google ML Kit Text Recognition with Regex Sensitive Redaction & Intent Parsing via SpatialVisionEngine.
      */
     private fun processOnDeviceOcr(session: WebSocketSession) {
         val bitmap = latestFrameProvider() ?: run {
@@ -503,98 +500,23 @@ class ZenithStreamServer(
             return
         }
 
-        try {
-            val inputImage = InputImage.fromBitmap(bitmap, 0)
-            textRecognizer.process(inputImage)
-                .addOnSuccessListener { visionText ->
-                    val fullText = visionText.text
-                    val blocksArray = JSONArray()
+        serverScope.launch {
+            try {
+                val result = spatialVisionEngine.analyzeFrame(
+                    bitmap = bitmap,
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight,
+                    autoRegisterPrivacyMasks = true
+                )
 
-                    val creditCardRegex = Regex("""\b(?:\d[ -]*?){13,16}\b""")
-                    val sensitiveLabelRegex = Regex("""(?i)\b(password|pin|cvv|cvc|ssn|secret|passcode|token)\b[:\s]*\S+""")
-                    val otpRegex = Regex("""(?i)\b(otp|code|verification)\b[:\s]*\d{4,8}|\b\d{6}\b""")
-
-                    val actionableKeywords = listOf(
-                        "Pay", "Submit", "Allow", "Confirm", "Settings", "Search", "Login",
-                        "Sign In", "Cart", "Cancel", "Back", "Delete", "Done", "Next", "Save", "Continue", "Order", "Checkout"
-                    )
-
-                    var autoMasksAdded = 0
-
-                    for (block in visionText.textBlocks) {
-                        val rect = block.boundingBox
-                        val blockText = block.text
-
-                        // 1. Sensitive Data Detection (Credit Cards, Passwords, OTPs)
-                        val isSensitive = creditCardRegex.containsMatchIn(blockText) ||
-                                sensitiveLabelRegex.containsMatchIn(blockText) ||
-                                otpRegex.containsMatchIn(blockText)
-
-                        if (isSensitive && rect != null) {
-                            val maskRect = android.graphics.RectF(
-                                rect.left.toFloat(),
-                                rect.top.toFloat(),
-                                rect.right.toFloat(),
-                                rect.bottom.toFloat()
-                            )
-                            ScreenCaptureService.addPrivacyMask(maskRect)
-                            autoMasksAdded++
-                        }
-
-                        // 2. Intent Classification
-                        var matchedCategory: String? = null
-                        for (kw in actionableKeywords) {
-                            if (blockText.contains(kw, ignoreCase = true)) {
-                                matchedCategory = kw
-                                break
-                            }
-                        }
-
-                        val blockJson = JSONObject().apply {
-                            put("text", blockText)
-                            put("isSensitive", isSensitive)
-                            if (matchedCategory != null) {
-                                put("category", matchedCategory)
-                            }
-                            if (rect != null) {
-                                put("left", rect.left)
-                                put("top", rect.top)
-                                put("right", rect.right)
-                                put("bottom", rect.bottom)
-                            }
-                        }
-                        blocksArray.put(blockJson)
-                    }
-
-                    val response = JSONObject().apply {
-                        put("type", "ocr_result")
-                        put("fullText", fullText)
-                        put("blockCount", visionText.textBlocks.size)
-                        put("autoMasksAdded", autoMasksAdded)
-                        put("privacyMasksTotal", ScreenCaptureService.getPrivacyMaskCount())
-                        put("blocks", blocksArray)
-                        put("frameWidth", bitmap.width)
-                        put("frameHeight", bitmap.height)
-                    }
-
-                    serverScope.launch {
-                        try {
-                            session.send(Frame.Text(response.toString()))
-                        } catch (e: Exception) {
-                            Log.w(TAG, "Failed to send OCR response: ${e.message}")
-                        }
-                    }
-
-                    eventListener?.onOcrCompleted(fullText, visionText.textBlocks.size)
-                    Log.i(TAG, "ML Kit OCR completed: ${visionText.textBlocks.size} blocks found ($autoMasksAdded sensitive regions auto-masked).")
-                }
-                .addOnFailureListener { e ->
-                    Log.e(TAG, "ML Kit OCR failed: ${e.message}", e)
-                    sendOcrError(session, "OCR Recognition failed: ${e.message}")
-                }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error during ML Kit OCR processing: ${e.message}", e)
-            sendOcrError(session, "OCR processing error: ${e.message}")
+                val responseJson = result.toJson()
+                session.send(Frame.Text(responseJson.toString()))
+                eventListener?.onOcrCompleted(result.fullText, result.blockCount)
+                Log.i(TAG, "SpatialVisionEngine OCR completed: ${result.blockCount} blocks found (${result.autoMasksAdded} sensitive regions auto-masked).")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error during SpatialVisionEngine OCR processing: ${e.message}", e)
+                sendOcrError(session, "OCR processing error: ${e.message}")
+            }
         }
     }
 
@@ -616,9 +538,8 @@ class ZenithStreamServer(
 
     override fun close() {
         serverScope.cancel()
-        try {
-            textRecognizer.close()
-        } catch (ignored: Exception) {}
+        spatialVisionEngine.close()
+        voiceControlEngine.destroy()
 
         try {
             ktorServer?.stop(500, 1500)
@@ -631,3 +552,4 @@ class ZenithStreamServer(
         }
     }
 }
+
