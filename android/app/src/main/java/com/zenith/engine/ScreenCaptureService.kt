@@ -39,15 +39,16 @@ import java.util.concurrent.atomic.AtomicLong
 /**
  * ScreenCaptureService: High-Throughput Android 14+ Foreground Service for Real-Time Game HUD Analysis.
  *
- * Key Architectural Guarantees:
- * 1. Touch Pass-Through: Uses FLAG_NOT_FOCUSABLE and FLAG_NOT_TOUCHABLE on the OverlayHudView
- *    so game touch input is never intercepted.
- * 2. Strict 10 FPS Frame Throttling: Enforces a 100ms minimum inter-frame delta to eliminate CPU/NPU
- *    thermal throttling and system UI freezes.
- * 3. Resource & Buffer Safety: All acquired Image instances are wrapped in try-finally blocks
- *    to prevent ImageReader buffer exhaustion and memory leaks.
- * 4. Thread Isolation: Frame ingestion/inference runs synchronously on a dedicated HandlerThread,
- *    while HUD updates are dispatched safely to the main thread.
+ * Key System-Level Guarantees:
+ * 1. Touch Pass-Through: Uses WRAP_CONTENT dimensions and strict non-modal flags
+ *    (FLAG_NOT_FOCUSABLE | FLAG_NOT_TOUCHABLE | FLAG_NOT_TOUCH_MODAL) without full-screen layout masks
+ *    to guarantee underlying touches are never blocked.
+ * 2. VirtualDisplay Optimization: Configured with DISPLAY_FLAG_PUBLIC to prevent Hardware Composer (HWC)
+ *    GPU starvation across external applications.
+ * 3. Strict 10 FPS Frame Throttling & Buffer Queue Flushing: Paces ingestion to a 100ms interval and
+ *    immediately acquires & closes dropped frames in try-finally blocks to avoid buffer exhaustion.
+ * 4. Thread Isolation: Model inference runs synchronously on the dedicated HandlerThread, while ONLY
+ *    overlay UI mutations are posted to the Main UI Thread.
  */
 class ScreenCaptureService : Service() {
 
@@ -209,7 +210,7 @@ class ScreenCaptureService : Service() {
             ZenithDetector.INPUT_WIDTH,
             ZenithDetector.INPUT_HEIGHT,
             screenDensity,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
             reader.surface,
             null,
             imageReaderHandler
@@ -227,22 +228,17 @@ class ScreenCaptureService : Service() {
                     WindowManager.LayoutParams.TYPE_PHONE
                 }
 
-                // Touch pass-through layout parameters: FLAG_NOT_FOCUSABLE and FLAG_NOT_TOUCHABLE
+                // Touch pass-through layout parameters: WRAP_CONTENT with non-focus, non-touch, and non-touch-modal flags
                 val params = WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
                     layoutFlag,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
-                            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                     PixelFormat.TRANSLUCENT
                 ).apply {
                     gravity = Gravity.TOP or Gravity.START
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                    }
                 }
 
                 windowManager.addView(hud, params)
@@ -256,9 +252,10 @@ class ScreenCaptureService : Service() {
 
     /**
      * Synchronous Ingestion Loop:
-     * - Throttles capture rate to max 10 FPS (100ms interval).
-     * - Executes inference directly on dedicated HandlerThread to guarantee complete buffer lifetime control.
-     * - Guarantees image.close() via try-finally blocks on all execution branches.
+     * - Throttles capture rate to max 10 FPS (100ms minimum interval).
+     * - Discards early / excess frames immediately inside try-finally to flush ImageReader queue.
+     * - Executes inference synchronously on dedicated imageReaderHandler thread.
+     * - Posts ONLY OverlayHudView detection updates to the main thread.
      */
     private fun onImageAvailable(reader: ImageReader) {
         val currentTimeMs = SystemClock.elapsedRealtime()
@@ -268,7 +265,7 @@ class ScreenCaptureService : Service() {
         if (currentTimeMs - lastTimeMs < MIN_FRAME_INTERVAL_MS) {
             val droppedImage = reader.acquireLatestImage() ?: return
             try {
-                // Drop frame early before modifying inference state
+                // Flush buffer immediately to enforce 10 FPS limit
             } finally {
                 droppedImage.close()
             }
@@ -281,7 +278,7 @@ class ScreenCaptureService : Service() {
         // 3. Drop frame if previous NPU/detector inference cycle is still executing
         if (!isInferring.compareAndSet(false, true)) {
             try {
-                // Inference in flight; release frame immediately
+                // Flush buffer immediately to prevent queue buildup during active inference
             } finally {
                 image.close()
             }
