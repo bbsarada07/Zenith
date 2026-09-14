@@ -10,6 +10,9 @@
     <!-- Overlay & Game HUD Permissions -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
+    <!-- Audio & Voice Input Permissions -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <!-- Local Network & Office Kit Telemetry Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -32,10 +35,23 @@
 
         <!-- Screen Capture Foreground Service -->
         <service
-            android:name="com.zenith.engine.service.ScreenCaptureService"
+            android:name="com.zenith.engine.ScreenCaptureService"
             android:exported="false"
             android:foregroundServiceType="mediaProjection"
             tools:node="merge" />
+
+        <!-- Remote Gesture & Accessibility Service -->
+        <service
+            android:name="com.zenith.engine.ZenithAccessibilityService"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_service_config" />
+        </service>
 
     </application>
 

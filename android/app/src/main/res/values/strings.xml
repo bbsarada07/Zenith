@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Zenith Engine</string>
+    <string name="accessibility_service_description">Zenith Engine Remote Accessibility Service for cross-device touch injection and AI copilot interactions.</string>
+</resources>

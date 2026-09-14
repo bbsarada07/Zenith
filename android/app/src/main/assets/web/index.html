@@ -1,0 +1,649 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zenith Engine — Command Center</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Outfit:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base: #080B10;
+            --bg-panel: #0E131C;
+            --bg-card: #141B27;
+            --border-color: #1E293B;
+            --cyber-cyan: #00F0FF;
+            --neon-yellow: #FFE600;
+            --danger-red: #FF0055;
+            --text-primary: #F0F4F8;
+            --text-muted: #8A99AD;
+            --glass-bg: rgba(14, 19, 28, 0.85);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background-color: var(--bg-base);
+            color: var(--text-primary);
+            font-family: 'Outfit', sans-serif;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        /* Header */
+        header {
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border-color);
+            padding: 14px 28px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-logo {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--cyber-cyan), #0066FF);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 800;
+            font-size: 18px;
+            color: #000;
+            box-shadow: 0 0 16px rgba(0, 240, 255, 0.35);
+        }
+
+        .brand-title {
+            font-size: 18px;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+
+        .brand-title span {
+            color: var(--cyber-cyan);
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            padding: 6px 14px;
+            border-radius: 20px;
+            background: rgba(30, 41, 59, 0.6);
+            border: 1px solid var(--border-color);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--danger-red);
+            transition: all 0.3s ease;
+        }
+
+        .status-dot.connected {
+            background-color: var(--cyber-cyan);
+            box-shadow: 0 0 10px var(--cyber-cyan);
+        }
+
+        /* Main Workspace Layout */
+        .workspace {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            gap: 24px;
+            padding: 24px;
+            flex: 1;
+            max-width: 1700px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        @media (max-width: 1080px) {
+            .workspace {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* Left Column: Canvas Viewport */
+        .viewport-container {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .canvas-card {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 16px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .canvas-wrapper {
+            position: relative;
+            max-width: 100%;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid rgba(0, 240, 255, 0.2);
+            background: #000;
+            cursor: crosshair;
+        }
+
+        canvas {
+            display: block;
+            width: 100%;
+            max-height: 72vh;
+            object-fit: contain;
+        }
+
+        .touch-ripple {
+            position: absolute;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            border: 2px solid var(--cyber-cyan);
+            background: rgba(0, 240, 255, 0.3);
+            transform: translate(-50%, -50%) scale(0);
+            animation: ripple 0.4s ease-out forwards;
+            pointer-events: none;
+        }
+
+        @keyframes ripple {
+            0% { transform: translate(-50%, -50%) scale(0.2); opacity: 1; }
+            100% { transform: translate(-50%, -50%) scale(1.6); opacity: 0; }
+        }
+
+        .viewport-controls {
+            display: flex;
+            gap: 12px;
+            width: 100%;
+            justify-content: space-between;
+            align-items: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+        }
+
+        .btn-action {
+            background: var(--bg-card);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            padding: 8px 16px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn-action:hover {
+            border-color: var(--cyber-cyan);
+            color: var(--cyber-cyan);
+            box-shadow: 0 0 12px rgba(0, 240, 255, 0.2);
+        }
+
+        /* Right Column: Telemetry & Actions */
+        .sidebar {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .panel-card {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+
+        .panel-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 14px;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            color: var(--cyber-cyan);
+            text-transform: uppercase;
+        }
+
+        /* Telemetry Grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+
+        .metric-tile {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .metric-label {
+            font-size: 11px;
+            color: var(--text-muted);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .metric-value {
+            font-size: 20px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace;
+            color: var(--neon-yellow);
+        }
+
+        /* Clipboard Sync Box */
+        .clipboard-box {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        textarea {
+            background: var(--bg-card);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
+            padding: 10px;
+            resize: vertical;
+            min-height: 70px;
+            outline: none;
+        }
+
+        textarea:focus {
+            border-color: var(--cyber-cyan);
+        }
+
+        .btn-primary {
+            background: var(--cyber-cyan);
+            color: #000;
+            border: none;
+            padding: 10px;
+            border-radius: 8px;
+            font-family: 'JetBrains Mono', monospace;
+            font-weight: 700;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary:hover {
+            opacity: 0.9;
+            box-shadow: 0 0 16px rgba(0, 240, 255, 0.4);
+        }
+
+        /* Live Reasoning Feed */
+        .event-feed {
+            max-height: 240px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .event-item {
+            background: var(--bg-card);
+            border-left: 3px solid var(--cyber-cyan);
+            padding: 8px 12px;
+            border-radius: 0 6px 6px 0;
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+
+        .event-time {
+            font-size: 10px;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header Bar -->
+    <header>
+        <div class="brand">
+            <div class="brand-logo">Z</div>
+            <div class="brand-title">ZENITH <span>ENGINE</span></div>
+        </div>
+        <div class="connection-status">
+            <div class="status-dot" id="statusDot"></div>
+            <span id="statusText">CONNECTING...</span>
+        </div>
+    </header>
+
+    <!-- Main Workspace -->
+    <div class="workspace">
+
+        <!-- Left: Live Viewport Canvas -->
+        <div class="viewport-container">
+            <div class="canvas-card">
+                <div class="canvas-wrapper" id="canvasWrapper">
+                    <canvas id="viewportCanvas" width="640" height="640"></canvas>
+                </div>
+            </div>
+
+            <div class="viewport-controls">
+                <span>🖱 TAP CANVAS TO INJECT REMOTE TOUCH</span>
+                <div style="display: flex; gap: 8px;">
+                    <button class="btn-action" id="btnSummarize">⚡ SUMMARIZE</button>
+                    <button class="btn-action" id="btnExtractText">📝 OCR TEXT</button>
+                    <button class="btn-action" id="btnToggleBoxes">👁 RETICLES: ON</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Telemetry & Multi-Device Control -->
+        <div class="sidebar">
+
+            <!-- Telemetry Panel -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <span>Performance Metrics</span>
+                    <span style="font-size: 11px; color: var(--text-muted);">Snapdragon NPU</span>
+                </div>
+                <div class="metrics-grid">
+                    <div class="metric-tile">
+                        <span class="metric-label">STREAM FPS</span>
+                        <span class="metric-value" id="valFps">--</span>
+                    </div>
+                    <div class="metric-tile">
+                        <span class="metric-label">LATENCY</span>
+                        <span class="metric-value" id="valLatency">-- ms</span>
+                    </div>
+                    <div class="metric-tile">
+                        <span class="metric-label">NPU INFERENCE</span>
+                        <span class="metric-value" id="valNpu">-- ms</span>
+                    </div>
+                    <div class="metric-tile">
+                        <span class="metric-label">APP RAM</span>
+                        <span class="metric-value" id="valRam">-- MB</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Multi-Device Clipboard Sync -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <span>Clipboard Auto-Inject</span>
+                </div>
+                <div class="clipboard-box">
+                    <textarea id="clipboardInput" placeholder="Type text, commands, or code patches to inject to phone clipboard..."></textarea>
+                    <button class="btn-primary" id="btnSendClipboard">🚀 INJECT TO PHONE CLIPBOARD</button>
+                </div>
+            </div>
+
+            <!-- AI Spatial Reasoning Event Feed -->
+            <div class="panel-card" style="flex: 1;">
+                <div class="panel-header">
+                    <span>Live Intelligence Log</span>
+                </div>
+                <div class="event-feed" id="eventFeed">
+                    <div class="event-item">
+                        <span class="event-time">System Ready</span>
+                        <span>WebSocket stream pipeline initialized.</span>
+                    </div>
+                </div>
+            </div>
+
+        </div>
+    </div>
+
+    <!-- Client Logic -->
+    <script>
+        const canvas = document.getElementById('viewportCanvas');
+        const ctx = canvas.getContext('2d');
+        const canvasWrapper = document.getElementById('canvasWrapper');
+        const statusDot = document.getElementById('statusDot');
+        const statusText = document.getElementById('statusText');
+
+        const valFps = document.getElementById('valFps');
+        const valLatency = document.getElementById('valLatency');
+        const valNpu = document.getElementById('valNpu');
+        const valRam = document.getElementById('valRam');
+        const eventFeed = document.getElementById('eventFeed');
+        const clipboardInput = document.getElementById('clipboardInput');
+        const btnSendClipboard = document.getElementById('btnSendClipboard');
+        const btnToggleBoxes = document.getElementById('btnToggleBoxes');
+
+        let ws = null;
+        let lastFrameTime = performance.now();
+        let frameCount = 0;
+        let fpsTimer = performance.now();
+        let currentDetections = [];
+        let showReticles = true;
+        let offscreenImg = new Image();
+
+        // Establish WebSocket Connection
+        function connectWebSocket() {
+            const host = window.location.host || '127.0.0.1:8080';
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${host}/stream`;
+
+            statusText.innerText = 'CONNECTING...';
+            statusDot.className = 'status-dot';
+
+            ws = new WebSocket(wsUrl);
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                statusText.innerText = 'STREAM ACTIVE (8080)';
+                statusDot.className = 'status-dot connected';
+                addLog('Connected to Zenith Engine Stream Server.');
+            };
+
+            ws.onmessage = (event) => {
+                if (typeof event.data === 'string') {
+                    // JSON Telemetry Packet
+                    try {
+                        const packet = JSON.parse(event.data);
+                        handleTelemetryPacket(packet);
+                    } catch (e) {
+                        console.error('Failed to parse telemetry JSON:', e);
+                    }
+                } else {
+                    // Binary JPEG Frame
+                    const now = performance.now();
+                    const delta = Math.round(now - lastFrameTime);
+                    lastFrameTime = now;
+                    valLatency.innerText = `${delta} ms`;
+
+                    frameCount++;
+                    if (now - fpsTimer >= 1000) {
+                        valFps.innerText = `${frameCount} FPS`;
+                        frameCount = 0;
+                        fpsTimer = now;
+                    }
+
+                    const blob = new Blob([event.data], { type: 'image/jpeg' });
+                    const blobUrl = URL.createObjectURL(blob);
+
+                    offscreenImg.onload = () => {
+                        renderFrameWithOverlays(offscreenImg);
+                        URL.revokeObjectURL(blobUrl);
+                    };
+                    offscreenImg.src = blobUrl;
+                }
+            };
+
+            ws.onclose = () => {
+                statusText.innerText = 'DISCONNECTED (RETRYING)';
+                statusDot.className = 'status-dot';
+                setTimeout(connectWebSocket, 2000);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+        }
+
+        function handleTelemetryPacket(data) {
+            if (data.npuLatencyMs !== undefined) valNpu.innerText = `${data.npuLatencyMs.toFixed(1)} ms`;
+            if (data.ramUsedMb !== undefined) valRam.innerText = `${data.ramUsedMb} MB`;
+            if (data.detections) currentDetections = data.detections;
+            if (data.logMessage) addLog(data.logMessage);
+        }
+
+        function renderFrameWithOverlays(img) {
+            if (canvas.width !== img.width || canvas.height !== img.height) {
+                canvas.width = img.width;
+                canvas.height = img.height;
+            }
+
+            // 1. Draw Raw Frame
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+            // 2. Draw Detection Reticles
+            if (showReticles && currentDetections && currentDetections.length > 0) {
+                const scaleX = canvas.width / 640;
+                const scaleY = canvas.height / 640;
+
+                ctx.lineWidth = 2.5;
+                ctx.strokeStyle = '#00F0FF';
+                ctx.fillStyle = '#FFE600';
+                ctx.font = '600 13px "JetBrains Mono", monospace';
+
+                currentDetections.forEach(det => {
+                    const x1 = det.x1 * scaleX;
+                    const y1 = det.y1 * scaleY;
+                    const x2 = det.x2 * scaleX;
+                    const y2 = det.y2 * scaleY;
+                    const w = x2 - x1;
+                    const h = y2 - y1;
+
+                    // Corner brackets
+                    const bLen = Math.min(w * 0.25, 20);
+                    ctx.beginPath();
+                    ctx.moveTo(x1, y1 + bLen); ctx.lineTo(x1, y1); ctx.lineTo(x1 + bLen, y1);
+                    ctx.moveTo(x2 - bLen, y1); ctx.lineTo(x2, y1); ctx.lineTo(x2, y1 + bLen);
+                    ctx.moveTo(x1, y2 - bLen); ctx.lineTo(x1, y2); ctx.lineTo(x1 + bLen, y2);
+                    ctx.moveTo(x2 - bLen, y2); ctx.lineTo(x2, y2); ctx.lineTo(x2, y2 - bLen);
+                    ctx.stroke();
+
+                    // Score tag
+                    const score = Math.round(det.score * 100);
+                    ctx.fillText(`${score}%`, x1, y1 - 4);
+                });
+            }
+        }
+
+        // Bidirectional Touch Injection
+        canvas.addEventListener('click', (e) => {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = e.clientX - rect.left;
+            const clickY = e.clientY - rect.top;
+
+            const normX = clickX / rect.width;
+            const normY = clickY / rect.top;
+
+            // Spawn visual ripple effect
+            const ripple = document.createElement('div');
+            ripple.className = 'touch-ripple';
+            ripple.style.left = `${clickX}px`;
+            ripple.style.top = `${clickY}px`;
+            canvasWrapper.appendChild(ripple);
+            setTimeout(() => ripple.remove(), 400);
+
+            // Send normalized touch packet over WebSocket
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const touchPacket = JSON.stringify({
+                    type: 'TOUCH',
+                    x: Math.min(Math.max(normX, 0), 1),
+                    y: Math.min(Math.max(normY, 0), 1)
+                });
+                ws.send(touchPacket);
+                addLog(`Touch Injected: (${(normX * 100).toFixed(1)}%, ${(normY * 100).toFixed(1)}%)`);
+            }
+        });
+
+        // Clipboard Sync Action
+        btnSendClipboard.addEventListener('click', () => {
+            const text = clipboardInput.value.trim();
+            if (!text) return;
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const clipPacket = JSON.stringify({
+                    type: 'SET_CLIPBOARD',
+                    text: text
+                });
+                ws.send(clipPacket);
+                addLog(`Clipboard synced (${text.length} chars)`);
+                clipboardInput.value = '';
+            }
+        });
+
+        // Quick Actions
+        document.getElementById('btnSummarize').addEventListener('click', () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'TRIGGER_REASONING', prompt: 'Summarize screen' }));
+                addLog('Requested screen summary.');
+            }
+        });
+
+        document.getElementById('btnExtractText').addEventListener('click', () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'TRIGGER_REASONING', prompt: 'Extract text' }));
+                addLog('Requested OCR extraction.');
+            }
+        });
+
+        btnToggleBoxes.addEventListener('click', () => {
+            showReticles = !showReticles;
+            btnToggleBoxes.innerText = `👁 RETICLES: ${showReticles ? 'ON' : 'OFF'}`;
+        });
+
+        function addLog(msg) {
+            const item = document.createElement('div');
+            item.className = 'event-item';
+            const time = new Date().toLocaleTimeString();
+            item.innerHTML = `<span class="event-time">${time}</span><span>${msg}</span>`;
+            eventFeed.prepend(item);
+            while (eventFeed.children.length > 20) {
+                eventFeed.removeChild(eventFeed.lastChild);
+            }
+        }
+
+        // Start connection
+        connectWebSocket();
+    </script>
+</body>
+</html>

@@ -15,8 +15,8 @@ android {
         versionName = "1.0.0"
 
         ndk {
-            // Target Snapdragon 64-bit ARM architectures (Kryo / Oryon CPU + Hexagon NPU)
-            abiFilters.addAll(setOf("arm64-v8a"))
+            // Target Snapdragon 64-bit ARM architectures and x86_64 emulator environments
+            abiFilters.addAll(setOf("arm64-v8a", "x86_64"))
         }
     }
 
@@ -47,20 +47,25 @@ android {
 }
 
 dependencies {
-    // ONNX Runtime Android with Qualcomm QNN Execution Provider
-    implementation("com.microsoft.onnxruntime:onnxruntime-android-qnn:1.20.0")
+    // ONNX Runtime Android
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 
-    // High-Throughput Embedded WebSocket Server for Office Kit Telemetry
+    // High-Throughput Embedded WebSocket Server for Telemetry
     implementation("org.java-websocket:Java-WebSocket:1.5.7")
 
+    // Embedded Ktor Server for Web Dashboard & Multi-Device Streaming
+    implementation("io.ktor:ktor-server-core:2.3.10")
+    implementation("io.ktor:ktor-server-cio:2.3.10")
+    implementation("io.ktor:ktor-server-websockets:2.3.10")
+
     // Kotlin Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 
     // AndroidX & Architecture Components
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("androidx.lifecycle:lifecycle-service:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.lifecycle:lifecycle-service:2.8.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.0")
     implementation("com.google.android.material:material:1.12.0")
 }
