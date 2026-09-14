@@ -447,7 +447,7 @@
         <div class="viewport-container">
             <div class="canvas-card">
                 <div class="canvas-wrapper" id="canvasWrapper">
-                    <canvas id="viewportCanvas" width="720" height="1600"></canvas>
+                    <canvas id="remoteScreen" width="720" height="1600"></canvas>
                 </div>
             </div>
 
@@ -552,7 +552,7 @@
 
     <!-- Client Logic -->
     <script>
-        const canvas = document.getElementById('viewportCanvas');
+        const canvas = document.getElementById('remoteScreen') || document.getElementById('viewportCanvas');
         const ctx = canvas.getContext('2d');
         const canvasWrapper = document.getElementById('canvasWrapper');
         const statusDot = document.getElementById('statusDot');
@@ -682,11 +682,12 @@
             if (data.detections) currentDetections = data.detections;
             if (data.logMessage) addLog(data.logMessage);
 
-            if (data.type === 'ocr_result') {
+            if (data.type === 'ocr_results' || data.type === 'ocr_result') {
                 ocrBlocks = data.blocks || [];
                 ocrFrameWidth = data.frameWidth || canvas.width;
                 ocrFrameHeight = data.frameHeight || canvas.height;
-                addLog(`ML Kit OCR: ${data.blockCount} blocks (${data.autoMasksAdded || 0} sensitive auto-redacted).`);
+                const count = data.blockCount || (data.blocks ? data.blocks.length : 0);
+                addLog(`ML Kit OCR: ${count} blocks (${data.autoMasksAdded || 0} sensitive auto-redacted).`);
             } else if (data.type === 'voice_command') {
                 addLog(`Voice Intent: "${data.transcript}" (Action: ${data.action})`, 'voice');
             } else if (data.type === 'macro_progress') {
@@ -694,8 +695,9 @@
             } else if (data.type === 'macro_status') {
                 if (data.macroJson) recordedMacroJson = data.macroJson;
             } else if (data.type === 'clipboard_sync') {
-                clipboardInput.value = data.text;
-                addLog(`Office Kit Synced Clipboard: ${data.text.substring(0, 30)}...`);
+                const clipText = data.content || data.text || '';
+                clipboardInput.value = clipText;
+                addLog(`Office Kit Synced Clipboard: ${clipText.substring(0, 30)}...`);
             }
         }
 
@@ -741,16 +743,27 @@
 
             // 3. Draw ML Kit OCR Spatial Text Bounding Boxes & Semantic Tags
             if (showReticles && ocrBlocks && ocrBlocks.length > 0) {
-                const scaleX = ocrFrameWidth > 0 ? (canvas.width / ocrFrameWidth) : 1;
-                const scaleY = ocrFrameHeight > 0 ? (canvas.height / ocrFrameHeight) : 1;
-
                 ocrBlocks.forEach(block => {
-                    const x = (block.left || 0) * scaleX;
-                    const y = (block.top || 0) * scaleY;
-                    const w = ((block.right || 0) - (block.left || 0)) * scaleX;
-                    const h = ((block.bottom || 0) - (block.top || 0)) * scaleY;
+                    let x = 0, y = 0, w = 0, h = 0;
+                    if (block.bounds && Array.isArray(block.bounds) && block.bounds.length === 4) {
+                        // Normalized bounds [left, top, right, bottom] in [0.0, 1.0]
+                        const [bLeft, bTop, bRight, bBottom] = block.bounds;
+                        x = bLeft * canvas.width;
+                        y = bTop * canvas.height;
+                        w = (bRight - bLeft) * canvas.width;
+                        h = (bBottom - bTop) * canvas.height;
+                    } else {
+                        const scaleX = ocrFrameWidth > 0 ? (canvas.width / ocrFrameWidth) : 1;
+                        const scaleY = ocrFrameHeight > 0 ? (canvas.height / ocrFrameHeight) : 1;
+                        x = (block.left || 0) * scaleX;
+                        y = (block.top || 0) * scaleY;
+                        w = ((block.right || 0) - (block.left || 0)) * scaleX;
+                        h = ((block.bottom || 0) - (block.top || 0)) * scaleY;
+                    }
 
-                    if (block.isSensitive) {
+                    const isSens = block.is_sensitive || block.isSensitive;
+
+                    if (isSens) {
                         ctx.lineWidth = 2.0;
                         ctx.strokeStyle = '#FF0055';
                         ctx.fillStyle = 'rgba(255, 0, 85, 0.25)';
@@ -771,6 +784,11 @@
                             ctx.fillStyle = '#FFE600';
                             ctx.font = '700 11px "JetBrains Mono", monospace';
                             ctx.fillText(`⚡ ${block.category.toUpperCase()}`, x + 2, y + 12);
+                        } else if (block.text) {
+                            ctx.fillStyle = '#00FF66';
+                            ctx.font = '600 10px "JetBrains Mono", monospace';
+                            const preview = block.text.length > 20 ? block.text.substring(0, 18) + '..' : block.text;
+                            ctx.fillText(preview, x + 2, y + 10);
                         }
                     }
                 });

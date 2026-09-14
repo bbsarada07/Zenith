@@ -34,6 +34,7 @@ import android.view.Gravity
 import android.view.WindowManager
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
+import org.json.JSONObject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -151,6 +152,27 @@ class ScreenCaptureService : Service() {
     // Adaptive Stream Quality State (scales dynamically between 35% and 75%)
     @Volatile private var currentAdaptiveQuality: Int = 65
 
+    // Clipboard synchronization
+    private var clipboardManager: ClipboardManager? = null
+    private var lastLocalCopiedText: String = ""
+    private val clipListener = ClipboardManager.OnPrimaryClipChangedListener {
+        val clip = clipboardManager?.primaryClip
+        if (clip != null && clip.itemCount > 0) {
+            val text = clip.getItemAt(0).text?.toString() ?: ""
+            if (text.isNotEmpty() && text != lastLocalCopiedText) {
+                lastLocalCopiedText = text
+                val clipJson = JSONObject().apply {
+                    put("type", "clipboard_sync")
+                    put("content", text)
+                    put("text", text)
+                    put("timestamp", System.currentTimeMillis())
+                }
+                zenithStreamServer?.broadcastJson(clipJson)
+                Log.i(TAG, "Device clipboard change broadcasted to Web Co-Pilot: $text")
+            }
+        }
+    }
+
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
             Log.w(TAG, "MediaProjection session revoked by system.")
@@ -162,6 +184,10 @@ class ScreenCaptureService : Service() {
         super.onCreate()
         createNotificationChannel()
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
+        clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        mainHandler.post {
+            clipboardManager?.addPrimaryClipChangedListener(clipListener)
+        }
 
         // 1. Initialize dedicated high-priority display thread
         screenStreamThread = HandlerThread("ScreenStreamThread", Process.THREAD_PRIORITY_DISPLAY).apply {
@@ -750,6 +776,12 @@ class ScreenCaptureService : Service() {
         super.onDestroy()
         stopCapture()
         serviceScope.cancel()
+
+        mainHandler.post {
+            try {
+                clipboardManager?.removePrimaryClipChangedListener(clipListener)
+            } catch (ignored: Exception) {}
+        }
 
         screenStreamThread?.quitSafely()
         screenStreamThread = null
