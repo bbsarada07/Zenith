@@ -17,6 +17,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.Looper
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
@@ -35,14 +36,6 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * ScreenCaptureService: High-Throughput Android 14+ Foreground Service for Real-Time Game HUD Analysis.
- *
- * Pipeline:
- * MediaProjection -> VirtualDisplay (640x640) -> ImageReader (RGBA_8888) -> DMA Byte Plane -> NPU Inference -> Flow
- *
- * Performance guarantees:
- * - 0 dynamic memory allocations in the frame ingestion loop.
- * - Hardware frame throttling: Automatically drops frames if the NPU is currently saturated, preventing latency buffer bloat.
- * - Compliant with Android 14 (API 34) & Android 15 (API 35) MediaProjection foreground service policies.
  */
 class ScreenCaptureService : Service() {
 
@@ -57,11 +50,9 @@ class ScreenCaptureService : Service() {
         const val EXTRA_RESULT_CODE = "RESULT_CODE"
         const val EXTRA_RESULT_DATA = "DATA_INTENT"
 
-        // Broadcast action for legacy/cross-process HUD receivers
         const val ACTION_DETECTIONS_BROADCAST = "com.zenith.engine.DETECTIONS_UPDATED"
         const val EXTRA_DETECTION_COUNT = "extra_detection_count"
 
-        // Zero-allocation reactive stream for in-process HUD overlay renderers
         private val _detectionsFlow = MutableSharedFlow<List<ZenithDetector.Detection>>(
             replay = 0,
             extraBufferCapacity = 1,
@@ -71,6 +62,7 @@ class ScreenCaptureService : Service() {
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var mediaProjectionManager: MediaProjectionManager? = null
     private var mediaProjection: MediaProjection? = null
@@ -83,10 +75,8 @@ class ScreenCaptureService : Service() {
     private var zenithDetector: ZenithDetector? = null
     private var overlayHudView: OverlayHudView? = null
 
-    // Concurrency control: Discards incoming frames when inference engine is busy
     private val isInferring = AtomicBoolean(false)
 
-    // MediaProjection Callback mandatory on Android 14+
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
             Log.w(TAG, "MediaProjection session stopped by system or user.")
@@ -99,13 +89,11 @@ class ScreenCaptureService : Service() {
         createNotificationChannel()
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
 
-        // Dedicated low-latency looper thread for raw image plane arrivals
         imageReaderThread = HandlerThread("ZenithImageReaderThread", android.os.Process.THREAD_PRIORITY_DISPLAY).apply {
             start()
             imageReaderHandler = Handler(looper)
         }
 
-        // Initialize ONNX Runtime / Qualcomm QNN HTP Engine
         try {
             zenithDetector = ZenithDetector(applicationContext, "yolov8n_int8_qnn.onnx")
             Log.i(TAG, "ZenithDetector initialized inside Foreground Service.")
@@ -117,7 +105,6 @@ class ScreenCaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
 
-        // 1. Mandatory for Android 14+: Always transition to foreground immediately
         startForegroundServiceWithNotification()
 
         if (action == ACTION_STOP) {
@@ -134,7 +121,6 @@ class ScreenCaptureService : Service() {
             intent?.getParcelableExtra(EXTRA_RESULT_DATA)
         }
 
-        // 2. Validate token and start virtual display capture
         if (resultCode != 0 && dataIntent != null) {
             Log.d(TAG, "MediaProjection token received. Starting Virtual Display...")
             startCapture(resultCode, dataIntent)
@@ -181,22 +167,19 @@ class ScreenCaptureService : Service() {
         }
         mediaProjection = projection
 
-        // Register mandatory callback (enforced starting with Android 14)
         projection.registerCallback(mediaProjectionCallback, imageReaderHandler)
 
-        // Query device screen density
         val windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         val metrics = DisplayMetrics()
         @Suppress("DEPRECATION")
         windowManager.defaultDisplay.getRealMetrics(metrics)
         val screenDensity = metrics.densityDpi
 
-        // Set up fixed 640x640 RGBA_8888 ImageReader matching the YOLOv8 input tensor dimensions
         val reader = ImageReader.newInstance(
             ZenithDetector.INPUT_WIDTH,
             ZenithDetector.INPUT_HEIGHT,
             PixelFormat.RGBA_8888,
-            2 // Double-buffer for zero-copy DMA streaming without frame lockups
+            2
         )
         imageReader = reader
 
@@ -204,7 +187,6 @@ class ScreenCaptureService : Service() {
             onImageAvailable(imageReaderInstance)
         }, imageReaderHandler)
 
-        // Attach VirtualDisplay to stream directly to ImageReader Surface
         virtualDisplay = projection.createVirtualDisplay(
             "ZenithNpuVirtualDisplay",
             ZenithDetector.INPUT_WIDTH,
@@ -218,7 +200,6 @@ class ScreenCaptureService : Service() {
 
         Log.i(TAG, "MediaProjection VirtualDisplay established [640x640@${screenDensity}dpi].")
 
-        // Display floating HUD overlay view on screen
         try {
             if (overlayHudView == null) {
                 val hud = OverlayHudView(applicationContext)
@@ -251,53 +232,56 @@ class ScreenCaptureService : Service() {
     }
 
     /**
-     * Hot Path Frame Listener:
-     * - Ingestion rate: Up to 60/120 FPS
-     * - Processing: Dropped automatically if previous frame inference is ongoing.
-     * - Zero heap allocation during processing.
+     * Synchronous Ingestion Loop:
+     * Executes inference directly on the HandlerThread to guarantee complete buffer lifetime control.
+     * Drops frames instantly if the NPU is currently processing a frame.
      */
     private fun onImageAvailable(reader: ImageReader) {
         val image = reader.acquireLatestImage() ?: return
 
-        // Throttle check: Drop frame immediately if inference is currently in progress
+        // Drop frame instantly if previous inference is still active
         if (!isInferring.compareAndSet(false, true)) {
             image.close()
             return
         }
 
-        serviceScope.launch(Dispatchers.Default) {
-            try {
-                val detector = zenithDetector
-                if (detector != null && image.planes.isNotEmpty()) {
-                    val plane = image.planes[0]
-                    val buffer = plane.buffer
+        try {
+            val detector = zenithDetector
+            if (detector != null && image.planes.isNotEmpty()) {
+                val plane = image.planes[0]
+                val buffer = plane.buffer
 
-                    // Zero-allocation DMA inference directly from native plane memory
-                    val detections = detector.detectImagePlane(
-                        planeBuffer = buffer,
-                        rowStride = plane.rowStride,
-                        pixelStride = plane.pixelStride,
-                        width = image.width,
-                        height = image.height
-                    )
+                // Run inference synchronously on the imageReaderHandler thread
+                val detections = detector.detectImagePlane(
+                    planeBuffer = buffer,
+                    rowStride = plane.rowStride,
+                    pixelStride = plane.pixelStride,
+                    width = image.width,
+                    height = image.height
+                )
 
-                    // Emit to SharedFlow for in-app floating overlay views
-                    _detectionsFlow.tryEmit(detections)
-                    overlayHudView?.updateDetections(detections)
-
-                    // Optional local broadcast for decouple module architectures
-                    val intent = Intent(ACTION_DETECTIONS_BROADCAST).apply {
-                        putExtra(EXTRA_DETECTION_COUNT, detections.size)
-                    }
-                    sendBroadcast(intent)
+                // Emit flow to background scope
+                serviceScope.launch {
+                    _detectionsFlow.emit(detections)
                 }
-            } catch (e: Throwable) {
-                Log.e(TAG, "Inference pipeline error: ${e.message}", e)
-            } finally {
-                // Mandatory: Always close Image to return buffer to hardware pool
-                image.close()
-                isInferring.set(false)
+
+                // Update UI overlay view on the Main UI Thread safely
+                mainHandler.post {
+                    overlayHudView?.updateDetections(detections)
+                }
+
+                // Broadcast results
+                val intent = Intent(ACTION_DETECTIONS_BROADCAST).apply {
+                    putExtra(EXTRA_DETECTION_COUNT, detections.size)
+                }
+                sendBroadcast(intent)
             }
+        } catch (e: Throwable) {
+            Log.e(TAG, "Inference pipeline error: ${e.message}", e)
+        } finally {
+            // ALWAYS release image buffer synchronously before exiting callback
+            image.close()
+            isInferring.set(false)
         }
     }
 
