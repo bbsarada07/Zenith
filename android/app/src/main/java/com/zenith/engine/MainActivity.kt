@@ -24,22 +24,26 @@ class MainActivity : AppCompatActivity() {
                 putExtra(ScreenCaptureService.EXTRA_RESULT_CODE, result.resultCode)
                 putExtra(ScreenCaptureService.EXTRA_RESULT_DATA, result.data)
             }
-            startForegroundService(serviceIntent)
-            finish()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(serviceIntent)
+            } else {
+                startService(serviceIntent)
+            }
+            // Removed finish() so the app screen stays open
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
         val textView = TextView(this).apply {
-            text = "Zenith Engine Active\nScreen Capture Initializing..."
+            text = "Zenith Engine Active\nScreen Capture & Inference Running..."
             textSize = 20f
             setPadding(50, 50, 50, 50)
         }
         setContentView(textView)
 
-        // Request Overlay permission first if not granted
+        // 1. Check for Overlay Permission
         if (!Settings.canDrawOverlays(this)) {
             val intent = Intent(
                 Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -49,6 +53,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // 2. Launch MediaProjection Request
         if (!hasRequestedProjection) {
             hasRequestedProjection = true
             val projectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager

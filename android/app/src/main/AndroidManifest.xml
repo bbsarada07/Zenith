@@ -10,7 +10,7 @@
     <!-- Overlay & Game HUD Permissions -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
 
-    <!-- Local Network & Office Kit Telemetry Permissions -->
+    <!-- Local Network & Telemetry Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -42,10 +42,10 @@
 
         <!-- Screen Capture Foreground Service -->
         <service
-            android:name="com.zenith.engine.service.ScreenCaptureService"
+            android:name="com.zenith.engine.ScreenCaptureService"
+            android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection"
-            tools:node="merge" />
+            android:foregroundServiceType="mediaProjection" />
 
     </application>
 
