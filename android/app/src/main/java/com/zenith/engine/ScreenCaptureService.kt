@@ -18,6 +18,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.Gravity
@@ -33,9 +34,20 @@ import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 
 /**
  * ScreenCaptureService: High-Throughput Android 14+ Foreground Service for Real-Time Game HUD Analysis.
+ *
+ * Key Architectural Guarantees:
+ * 1. Touch Pass-Through: Uses FLAG_NOT_FOCUSABLE and FLAG_NOT_TOUCHABLE on the OverlayHudView
+ *    so game touch input is never intercepted.
+ * 2. Strict 10 FPS Frame Throttling: Enforces a 100ms minimum inter-frame delta to eliminate CPU/NPU
+ *    thermal throttling and system UI freezes.
+ * 3. Resource & Buffer Safety: All acquired Image instances are wrapped in try-finally blocks
+ *    to prevent ImageReader buffer exhaustion and memory leaks.
+ * 4. Thread Isolation: Frame ingestion/inference runs synchronously on a dedicated HandlerThread,
+ *    while HUD updates are dispatched safely to the main thread.
  */
 class ScreenCaptureService : Service() {
 
@@ -52,6 +64,10 @@ class ScreenCaptureService : Service() {
 
         const val ACTION_DETECTIONS_BROADCAST = "com.zenith.engine.DETECTIONS_UPDATED"
         const val EXTRA_DETECTION_COUNT = "extra_detection_count"
+
+        // Frame Throttling Configuration: 10 FPS Max -> 100ms min interval
+        private const val TARGET_MAX_FPS = 10
+        private const val MIN_FRAME_INTERVAL_MS = 1000L / TARGET_MAX_FPS
 
         private val _detectionsFlow = MutableSharedFlow<List<ZenithDetector.Detection>>(
             replay = 0,
@@ -76,6 +92,7 @@ class ScreenCaptureService : Service() {
     private var overlayHudView: OverlayHudView? = null
 
     private val isInferring = AtomicBoolean(false)
+    private val lastFrameTimestampMs = AtomicLong(0L)
 
     private val mediaProjectionCallback = object : MediaProjection.Callback() {
         override fun onStop() {
@@ -210,21 +227,27 @@ class ScreenCaptureService : Service() {
                     WindowManager.LayoutParams.TYPE_PHONE
                 }
 
+                // Touch pass-through layout parameters: FLAG_NOT_FOCUSABLE and FLAG_NOT_TOUCHABLE
                 val params = WindowManager.LayoutParams(
-                    WindowManager.LayoutParams.WRAP_CONTENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
+                    WindowManager.LayoutParams.MATCH_PARENT,
                     layoutFlag,
                     WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                            WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
                     PixelFormat.TRANSLUCENT
                 ).apply {
                     gravity = Gravity.TOP or Gravity.START
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+                    }
                 }
 
                 windowManager.addView(hud, params)
                 overlayHudView = hud
-                Log.i(TAG, "OverlayHudView successfully displayed on screen.")
+                Log.i(TAG, "OverlayHudView successfully displayed with touch pass-through enabled.")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to attach OverlayHudView: ${e.message}", e)
@@ -233,17 +256,40 @@ class ScreenCaptureService : Service() {
 
     /**
      * Synchronous Ingestion Loop:
-     * Executes inference directly on the HandlerThread to guarantee complete buffer lifetime control.
-     * Drops frames instantly if the NPU is currently processing a frame.
+     * - Throttles capture rate to max 10 FPS (100ms interval).
+     * - Executes inference directly on dedicated HandlerThread to guarantee complete buffer lifetime control.
+     * - Guarantees image.close() via try-finally blocks on all execution branches.
      */
     private fun onImageAvailable(reader: ImageReader) {
-        val image = reader.acquireLatestImage() ?: return
+        val currentTimeMs = SystemClock.elapsedRealtime()
+        val lastTimeMs = lastFrameTimestampMs.get()
 
-        // Drop frame instantly if previous inference is still active
-        if (!isInferring.compareAndSet(false, true)) {
-            image.close()
+        // 1. Dynamic Frame Throttling (10 FPS Limit / 100ms interval)
+        if (currentTimeMs - lastTimeMs < MIN_FRAME_INTERVAL_MS) {
+            val droppedImage = reader.acquireLatestImage() ?: return
+            try {
+                // Drop frame early before modifying inference state
+            } finally {
+                droppedImage.close()
+            }
             return
         }
+
+        // 2. Acquire latest image buffer
+        val image = reader.acquireLatestImage() ?: return
+
+        // 3. Drop frame if previous NPU/detector inference cycle is still executing
+        if (!isInferring.compareAndSet(false, true)) {
+            try {
+                // Inference in flight; release frame immediately
+            } finally {
+                image.close()
+            }
+            return
+        }
+
+        // Record timestamp for frame pacing
+        lastFrameTimestampMs.set(currentTimeMs)
 
         try {
             val detector = zenithDetector
@@ -251,7 +297,7 @@ class ScreenCaptureService : Service() {
                 val plane = image.planes[0]
                 val buffer = plane.buffer
 
-                // Run inference synchronously on the imageReaderHandler thread
+                // Run inference synchronously on the dedicated HandlerThread
                 val detections = detector.detectImagePlane(
                     planeBuffer = buffer,
                     rowStride = plane.rowStride,
@@ -260,12 +306,12 @@ class ScreenCaptureService : Service() {
                     height = image.height
                 )
 
-                // Emit flow to background scope
+                // Emit flow to background coroutine scope
                 serviceScope.launch {
                     _detectionsFlow.emit(detections)
                 }
 
-                // Update UI overlay view on the Main UI Thread safely
+                // Update UI overlay view strictly on the Main UI Thread
                 mainHandler.post {
                     overlayHudView?.updateDetections(detections)
                 }
