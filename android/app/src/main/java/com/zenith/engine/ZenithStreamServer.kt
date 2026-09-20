@@ -7,50 +7,37 @@ import android.graphics.Bitmap
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
-import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.TextRecognition
-import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import io.ktor.http.ContentType
-import io.ktor.http.HttpStatusCode
-import io.ktor.server.application.call
-import io.ktor.server.application.install
-import io.ktor.server.cio.CIO
-import io.ktor.server.engine.ApplicationEngine
-import io.ktor.server.engine.embeddedServer
-import io.ktor.server.response.respondText
-import io.ktor.server.routing.get
-import io.ktor.server.routing.routing
-import io.ktor.server.websocket.WebSockets
-import io.ktor.server.websocket.webSocket
-import io.ktor.websocket.Frame
-import io.ktor.websocket.WebSocketSession
-import io.ktor.websocket.readText
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.ClosedSendChannelException
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.java_websocket.WebSocket
+import org.java_websocket.handshake.ClientHandshake
+import org.java_websocket.server.WebSocketServer
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.net.InetSocketAddress
+import java.nio.ByteBuffer
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * ZenithStreamServer: Embedded Ktor CIO Streaming Server & ML Kit Vision Intelligence Engine.
+ * ZenithStreamServer: High-Throughput Native WebSocket Server & Remote Command Routing Bridge.
  *
- * Capabilities:
- * 1. Hosts the desktop Web Command Center (`/`) directly from APK assets (`web/index.html`).
- * 2. Broadcasts ultra-low latency JPEG keyframe streams and JSON telemetry over WebSockets (`/stream`).
- * 3. Handles remote gestures (tap, swipe), clipboard synchronization, and on-device ML Kit OCR over (`/control` and `/stream`).
+ * Extends [WebSocketServer] on port 8080 to deliver:
+ * 1. Ultra-low latency binary JPEG screen streaming.
+ * 2. On-demand ML Kit OCR spatial text recognition and zero-trust privacy redaction.
+ * 3. Self-healing automation macro replay.
+ * 4. Real-time telemetry broadcasting (FPS, Ping RTT, NPU latency, JVM heap).
+ * 5. Remote touch, swipe, system navigation, and clipboard synchronization.
  */
 class ZenithStreamServer(
     val context: Context,
-    val port: Int = 8080,
+    port: Int = 8080,
     val latestFrameProvider: () -> Bitmap? = { null }
-) : AutoCloseable {
+) : WebSocketServer(InetSocketAddress(port)), AutoCloseable {
 
     companion object {
         private const val TAG = "ZenithStreamServer"
@@ -66,21 +53,22 @@ class ZenithStreamServer(
     var eventListener: ServerEventListener? = null
 
     private val serverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var ktorServer: ApplicationEngine? = null
     private val mainHandler = Handler(Looper.getMainLooper())
 
-    // Thread-safe set of connected WebSocket stream sessions
-    private val streamSessions = Collections.newSetFromMap(ConcurrentHashMap<WebSocketSession, Boolean>())
-    // Thread-safe set of connected WebSocket control sessions
-    private val controlSessions = Collections.newSetFromMap(ConcurrentHashMap<WebSocketSession, Boolean>())
+    // Active Connected Clients
+    private val connectedClients = Collections.newSetFromMap(ConcurrentHashMap<WebSocket, Boolean>())
 
-    // Metrics & Screen State
-    @Volatile private var screenWidth: Int = 1080
-    @Volatile private var screenHeight: Int = 2400
-    @Volatile private var lastNpuMs: Float = 4.2f
-    @Volatile private var lastLatencyMs: Long = 14L
-    @Volatile private var lastDetections: List<ZenithDetector.Detection> = emptyList()
-    private val frameTimestamps = java.util.concurrent.ConcurrentLinkedDeque<Long>()
+    // Engine Components
+    val spatialVisionEngine by lazy { SpatialVisionEngine() }
+    val selfHealingMacroEngine by lazy { SelfHealingMacroEngine(spatialVisionEngine) }
+    val macroEngine by lazy { MacroEngine(frameProvider = latestFrameProvider) }
+    val engineTelemetry by lazy {
+        EngineTelemetry { json -> broadcastJson(json) }
+    }
+
+    // Viewport Screen Metrics
+    @Volatile var screenWidth: Int = 1080
+    @Volatile var screenHeight: Int = 2400
 
     fun updateScreenDimensions(width: Int, height: Int) {
         this.screenWidth = width
@@ -88,278 +76,94 @@ class ZenithStreamServer(
         Log.i(TAG, "Screen dimensions updated: ${width}x${height}")
     }
 
-    fun recordMetrics(latencyMs: Long, npuMs: Float, detections: List<ZenithDetector.Detection>) {
-        val now = android.os.SystemClock.elapsedRealtime()
-        frameTimestamps.addLast(now)
-        while (frameTimestamps.isNotEmpty() && (frameTimestamps.peekFirst()?.let { now - it > 1000L } == true)) {
-            frameTimestamps.pollFirst()
-        }
-        lastLatencyMs = latencyMs
-        lastNpuMs = npuMs
-        lastDetections = detections
+    override fun onStart() {
+        Log.i(TAG, "ZenithStreamServer started successfully on port $port")
+        engineTelemetry.start(serverScope)
     }
 
-    fun getRollingFps(): Int {
-        val now = android.os.SystemClock.elapsedRealtime()
-        while (frameTimestamps.isNotEmpty() && (frameTimestamps.peekFirst()?.let { now - it > 1000L } == true)) {
-            frameTimestamps.pollFirst()
+    override fun onOpen(conn: WebSocket, handshake: ClientHandshake?) {
+        connectedClients.add(conn)
+        Log.i(TAG, "Client connected: ${conn.remoteSocketAddress} (Total clients: ${connectedClients.size})")
+
+        // Send initial connection acknowledgement with screen metrics
+        val helloPacket = JSONObject().apply {
+            put("type", "CONNECTION_ESTABLISHED")
+            put("port", port)
+            put("screenWidth", screenWidth)
+            put("screenHeight", screenHeight)
+            put("serverTime", System.currentTimeMillis())
         }
-        return frameTimestamps.size
+        conn.send(helloPacket.toString())
     }
 
-    fun start() {
-        if (ktorServer != null) return
+    override fun onClose(conn: WebSocket, code: Int, reason: String?, remote: Boolean) {
+        connectedClients.remove(conn)
+        Log.i(TAG, "Client disconnected: ${conn.remoteSocketAddress} (Remaining: ${connectedClients.size})")
+    }
 
+    override fun onError(conn: WebSocket?, ex: Exception?) {
+        Log.e(TAG, "WebSocket error on connection ${conn?.remoteSocketAddress}: ${ex?.message}", ex)
+    }
+
+    override fun onMessage(conn: WebSocket, message: String) {
+        handleInboundMessage(conn, message)
+    }
+
+    override fun onMessage(conn: WebSocket, message: ByteBuffer) {
+        // Binary message handler if needed
+    }
+
+    /**
+     * Processes inbound JSON action packets from web dashboards and clients.
+     */
+    private fun handleInboundMessage(conn: WebSocket, messageText: String) {
         try {
-            startTelemetryTicker()
+            val json = JSONObject(messageText)
+            val action = if (json.has("action")) {
+                json.optString("action")
+            } else {
+                json.optString("type")
+            }
 
-            ktorServer = embeddedServer(CIO, port = port, host = "0.0.0.0") {
-                install(WebSockets)
+            when (action.uppercase()) {
+                // 1. On-Demand ML Kit OCR Processing
+                "SCAN_OCR", "OCR", "EXTRACT_TEXT" -> {
+                    handleOcrScanRequest(conn)
+                }
 
-                routing {
-                    // 1. Serve Web Command Center Dashboard
-                    get("/") {
-                        try {
-                            val html = this@ZenithStreamServer.context.assets
-                                .open("web/index.html")
-                                .bufferedReader()
-                                .use { it.readText() }
-                            call.respondText(html, ContentType.Text.Html)
-                        } catch (e: Exception) {
-                            Log.e(TAG, "Error loading web/index.html from assets: ${e.message}")
-                            call.respondText(
-                                "Zenith Engine: Failed to load web/index.html (${e.message})",
-                                ContentType.Text.Plain,
-                                HttpStatusCode.InternalServerError
-                            )
-                        }
+                // 2. Self-Healing Macro Action Execution
+                "PLAY_MACRO", "MACRO_ACTION", "EXECUTE_MACRO" -> {
+                    handlePlayMacroRequest(conn, json)
+                }
+
+                // 3. Client Round-Trip Latency Ping-Pong
+                "PING" -> {
+                    val clientTime = json.optLong("timestamp", System.currentTimeMillis())
+                    engineTelemetry.recordPingResponse(clientTime)
+                    val pongJson = JSONObject().apply {
+                        put("type", "PONG")
+                        put("clientTimestamp", clientTime)
+                        put("serverTimestamp", System.currentTimeMillis())
                     }
-
-                    // 2. Stream WebSocket Endpoint: Dispatches binary frames & processes incoming control packets
-                    webSocket("/stream") {
-                        streamSessions.add(this)
-                        Log.i(TAG, "Web client connected to /stream. Total: ${streamSessions.size}")
-
-                        try {
-                            for (frame in incoming) {
-                                if (frame is Frame.Text) {
-                                    val text = frame.readText()
-                                    handleInboundPayload(text, this)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "WebSocket /stream session error: ${e.message}")
-                        } finally {
-                            streamSessions.remove(this)
-                            Log.i(TAG, "Web client disconnected from /stream. Total: ${streamSessions.size}")
-                        }
-                    }
-
-                    // 3. Dedicated Remote Control & Intelligence WebSocket Endpoint
-                    webSocket("/control") {
-                        controlSessions.add(this)
-                        Log.i(TAG, "Web client connected to /control. Total: ${controlSessions.size}")
-
-                        try {
-                            for (frame in incoming) {
-                                if (frame is Frame.Text) {
-                                    val text = frame.readText()
-                                    handleInboundPayload(text, this)
-                                }
-                            }
-                        } catch (e: Exception) {
-                            Log.w(TAG, "WebSocket /control session error: ${e.message}")
-                        } finally {
-                            controlSessions.remove(this)
-                            Log.i(TAG, "Web client disconnected from /control. Total: ${controlSessions.size}")
-                        }
-                    }
+                    conn.send(pongJson.toString())
                 }
-            }.start(wait = false)
 
-            Log.i(TAG, "ZenithStreamServer started successfully on http://0.0.0.0:$port")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to start embedded Ktor server on port $port: ${e.message}", e)
-        }
-    }
-
-    /**
-     * Periodic 300ms telemetry ticker pushing engine health stats.
-     */
-    private fun startTelemetryTicker() {
-        serverScope.launch {
-            while (isActive) {
-                delay(300)
-                if (streamSessions.isNotEmpty() || controlSessions.isNotEmpty()) {
-                    pushTelemetryPacket()
-                }
-            }
-        }
-    }
-
-    // Vision, Voice & Macro Automation Engines
-    val spatialVisionEngine by lazy { SpatialVisionEngine() }
-    val macroEngine by lazy { MacroEngine(frameProvider = latestFrameProvider) }
-    val voiceControlEngine by lazy {
-        VoiceControlEngine(
-            context = context,
-            frameProvider = latestFrameProvider,
-            spatialVisionEngine = spatialVisionEngine,
-            eventBroadcaster = { transcript, action, executed ->
-                val voiceJson = JSONObject().apply {
-                    put("type", "voice_command")
-                    put("transcript", transcript)
-                    put("action", action)
-                    put("executed", executed)
-                }
-                broadcastJson(voiceJson)
-            }
-        )
-    }
-
-    private fun pushTelemetryPacket() {
-        val runtime = Runtime.getRuntime()
-        val ramMb = ((runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)).toInt()
-        val fps = getRollingFps()
-
-        val json = JSONObject().apply {
-            put("type", "telemetry")
-            put("fps", fps)
-            put("latency_ms", lastLatencyMs)
-            put("npu_ms", (lastNpuMs * 10).toInt() / 10.0)
-            put("ram_mb", ramMb)
-            put("privacy_masks_active", ScreenCaptureService.getPrivacyMaskCount())
-            put("screen_width", screenWidth)
-            put("screen_height", screenHeight)
-
-            // Backwards compatibility keys
-            put("timestamp", System.currentTimeMillis())
-            put("npuLatencyMs", lastNpuMs)
-            put("ramUsedMb", ramMb)
-
-            val detArray = JSONArray()
-            for (det in lastDetections) {
-                val dObj = JSONObject().apply {
-                    put("x1", det.x1)
-                    put("y1", det.y1)
-                    put("x2", det.x2)
-                    put("y2", det.y2)
-                    put("score", det.score)
-                    put("classId", det.classId)
-                }
-                detArray.put(dObj)
-            }
-            put("detections", detArray)
-        }
-
-        broadcastJson(json)
-    }
-
-    /**
-     * Broadcasts a compressed JPEG frame to all connected streaming clients.
-     */
-    fun broadcastFrame(jpegBytes: ByteArray) {
-        if (streamSessions.isEmpty()) return
-
-        val frame = Frame.Binary(true, jpegBytes)
-        serverScope.launch {
-            val iterator = streamSessions.iterator()
-            while (iterator.hasNext()) {
-                val session = iterator.next()
-                try {
-                    session.send(frame)
-                } catch (e: ClosedSendChannelException) {
-                    iterator.remove()
-                } catch (e: Exception) {
-                    Log.w(TAG, "Failed to dispatch frame to client: ${e.message}")
-                }
-            }
-        }
-    }
-
-    /**
-     * Broadcasts JSON telemetry metadata (FPS, Latency, Memory, Detections).
-     */
-    fun broadcastTelemetry(
-        fps: Float,
-        npuLatencyMs: Float,
-        detections: List<ZenithDetector.Detection>,
-        logMessage: String? = null
-    ) {
-        if (streamSessions.isEmpty() && controlSessions.isEmpty()) return
-
-        val runtime = Runtime.getRuntime()
-        val ramUsedMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
-
-        val json = JSONObject().apply {
-            put("timestamp", System.currentTimeMillis())
-            put("fps", fps)
-            put("npuLatencyMs", npuLatencyMs)
-            put("ramUsedMb", ramUsedMb)
-            put("privacy_masks_active", ScreenCaptureService.getPrivacyMaskCount())
-            if (logMessage != null) {
-                put("logMessage", logMessage)
-            }
-
-            val detArray = JSONArray()
-            for (det in detections) {
-                val dObj = JSONObject().apply {
-                    put("x1", det.x1)
-                    put("y1", det.y1)
-                    put("x2", det.x2)
-                    put("y2", det.y2)
-                    put("score", det.score)
-                    put("classId", det.classId)
-                }
-                detArray.put(dObj)
-            }
-            put("detections", detArray)
-        }
-
-        broadcastJson(json)
-    }
-
-    /**
-     * Broadcasts arbitrary JSON objects to all connected clients.
-     */
-    fun broadcastJson(json: JSONObject) {
-        val textFrame = Frame.Text(json.toString())
-        serverScope.launch {
-            val allSessions = streamSessions + controlSessions
-            for (session in allSessions) {
-                try {
-                    session.send(textFrame)
-                } catch (e: Exception) {
-                    // Ignore transient network errors
-                }
-            }
-        }
-    }
-
-    /**
-     * Processes inbound JSON command frames and executes actions.
-     */
-    private fun handleInboundPayload(payloadText: String, session: WebSocketSession) {
-        try {
-            val json = JSONObject(payloadText)
-            val action = if (json.has("action")) json.optString("action") else json.optString("type")
-
-            when (action.lowercase()) {
-                "tap", "touch" -> {
-                    val normX = json.optDouble("x", 0.0).toFloat()
-                    val normY = json.optDouble("y", 0.0).toFloat()
+                // 4. Remote Tap & Touch Injection
+                "TAP", "TOUCH" -> {
+                    val normX = json.optDouble("x", 0.5).toFloat()
+                    val normY = json.optDouble("y", 0.5).toFloat()
                     val label = if (json.has("label")) json.getString("label") else null
 
                     if (macroEngine.isRecording) {
                         macroEngine.recordTap(normX, normY, label)
                     }
 
-                    // Execute touch via Accessibility Service
                     ZenithAccessibilityService.performTap(normX, normY)
                     eventListener?.onRemoteTouchReceived(normX, normY)
                 }
 
-                "swipe" -> {
+                // 5. Remote Swipe Injection
+                "SWIPE" -> {
                     val startX = json.optDouble("startX", 0.5).toFloat()
                     val startY = json.optDouble("startY", 0.7).toFloat()
                     val endX = json.optDouble("endX", 0.5).toFloat()
@@ -373,7 +177,8 @@ class ZenithStreamServer(
                     ZenithAccessibilityService.performSwipe(startX, startY, endX, endY, duration)
                 }
 
-                "system_key", "key_event", "hardware_key" -> {
+                // 6. System Navigation Hardware Keys
+                "KEY", "SYSTEM_KEY", "HARDWARE_KEY" -> {
                     val key = json.optString("key", "back").lowercase()
                     when (key) {
                         "back" -> ZenithAccessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
@@ -382,91 +187,18 @@ class ZenithStreamServer(
                         "notifications" -> ZenithAccessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
                         "quick_settings" -> ZenithAccessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
                     }
-                    Log.i(TAG, "Executed system global key action: $key")
                 }
 
-                "add_mask", "mask_rect" -> {
-                    val left = json.optDouble("left", 0.0).toFloat()
-                    val top = json.optDouble("top", 0.0).toFloat()
-                    val right = json.optDouble("right", 0.0).toFloat()
-                    val bottom = json.optDouble("bottom", 0.0).toFloat()
-                    ScreenCaptureService.addPrivacyMask(android.graphics.RectF(left, top, right, bottom))
-                    broadcastJson(JSONObject().apply {
-                        put("type", "privacy_mask_update")
-                        put("activeMasks", ScreenCaptureService.getPrivacyMaskCount())
-                    })
-                }
-
-                "clear_masks", "unmask" -> {
-                    ScreenCaptureService.clearPrivacyMasks()
-                    broadcastJson(JSONObject().apply {
-                        put("type", "privacy_mask_update")
-                        put("activeMasks", 0)
-                    })
-                }
-
-                "macro_record_start" -> {
-                    macroEngine.startRecording()
-                    broadcastJson(JSONObject().apply {
-                        put("type", "macro_status")
-                        put("isRecording", true)
-                    })
-                }
-
-                "macro_record_stop" -> {
-                    val macroJson = macroEngine.stopRecording()
-                    broadcastJson(JSONObject().apply {
-                        put("type", "macro_status")
-                        put("isRecording", false)
-                        put("macroJson", macroJson)
-                    })
-                }
-
-                "macro_play", "play_macro" -> {
-                    val macroJson = json.optString("macro_json", "")
-                    val selfHealing = json.optBoolean("self_healing", true)
-                    macroEngine.playMacro(macroJson, enableSelfHealing = selfHealing) { stepNum, total, desc ->
-                        broadcastJson(JSONObject().apply {
-                            put("type", "macro_progress")
-                            put("currentStep", stepNum)
-                            put("totalSteps", total)
-                            put("description", desc)
-                        })
-                    }
-                }
-
-                "macro_stop" -> {
-                    macroEngine.stopPlayback()
-                }
-
-                "voice_start", "voice_listen" -> {
-                    voiceControlEngine.startListening()
-                    broadcastJson(JSONObject().apply {
-                        put("type", "voice_status")
-                        put("isListening", true)
-                    })
-                }
-
-                "voice_stop" -> {
-                    voiceControlEngine.stopListening()
-                    broadcastJson(JSONObject().apply {
-                        put("type", "voice_status")
-                        put("isListening", false)
-                    })
-                }
-
-                "inject_text" -> {
+                // 7. Text Injection into Focused Edit Field
+                "INJECT_TEXT", "TEXT" -> {
                     val text = json.optString("text", "")
                     if (text.isNotEmpty()) {
                         ZenithAccessibilityService.injectTextToFocus(text)
                     }
                 }
 
-                "scan_ocr", "ocr", "extract_text" -> {
-                    processOnDeviceOcr(session)
-                }
-
-                "clipboard", "set_clipboard" -> {
+                // 8. Device Clipboard Sync
+                "CLIPBOARD", "SET_CLIPBOARD" -> {
                     val text = if (json.has("content")) json.optString("content", "") else json.optString("text", "")
                     if (text.isNotEmpty()) {
                         mainHandler.post {
@@ -475,14 +207,50 @@ class ZenithStreamServer(
                             clipboard.setPrimaryClip(clip)
                         }
                         eventListener?.onRemoteClipboardReceived(text)
-                        Log.i(TAG, "Inbound remote clipboard synced: $text")
                     }
                 }
 
-                "trigger_reasoning", "reason", "summarize" -> {
+                // 9. Privacy Mask Management
+                "ADD_MASK", "MASK_RECT" -> {
+                    val left = json.optDouble("left", 0.0).toFloat()
+                    val top = json.optDouble("top", 0.0).toFloat()
+                    val right = json.optDouble("right", 0.0).toFloat()
+                    val bottom = json.optDouble("bottom", 0.0).toFloat()
+                    ScreenCaptureService.addPrivacyMask(android.graphics.RectF(left, top, right, bottom))
+                    engineTelemetry.activePrivacyMasks = ScreenCaptureService.getPrivacyMaskCount()
+                }
+
+                "CLEAR_MASKS", "UNMASK" -> {
+                    ScreenCaptureService.clearPrivacyMasks()
+                    engineTelemetry.activePrivacyMasks = 0
+                }
+
+                // 10. Macro Recording Controls
+                "MACRO_RECORD_START" -> {
+                    macroEngine.startRecording()
+                    broadcastJson(JSONObject().apply {
+                        put("type", "macro_status")
+                        put("isRecording", true)
+                    })
+                }
+
+                "MACRO_RECORD_STOP" -> {
+                    val macroJson = macroEngine.stopRecording()
+                    broadcastJson(JSONObject().apply {
+                        put("type", "macro_status")
+                        put("isRecording", false)
+                        put("macroJson", macroJson)
+                    })
+                }
+
+                // 11. Deep AI Reasoning Trigger
+                "TRIGGER_REASONING", "REASON" -> {
                     val prompt = json.optString("prompt", "Analyze screen context")
                     eventListener?.onRemoteReasoningTriggered(prompt)
-                    Log.i(TAG, "Inbound reasoning command triggered: $prompt")
+                }
+
+                else -> {
+                    Log.d(TAG, "Unhandled action: $action")
                 }
             }
         } catch (e: Exception) {
@@ -491,65 +259,211 @@ class ZenithStreamServer(
     }
 
     /**
-     * Performs Google ML Kit Text Recognition with Regex Sensitive Redaction & Intent Parsing via SpatialVisionEngine.
+     * Handles `SCAN_OCR`: Runs [SpatialVisionEngine] on the current frame,
+     * redacts sensitive data via [PrivacyRedactor], and responds with `OCR_DETECTION`.
      */
-    private fun processOnDeviceOcr(session: WebSocketSession) {
+    private fun handleOcrScanRequest(conn: WebSocket) {
         val bitmap = latestFrameProvider() ?: run {
-            Log.w(TAG, "No frame available for OCR analysis.")
-            sendOcrError(session, "No active frame captured yet.")
+            val errorJson = JSONObject().apply {
+                put("type", "OCR_ERROR")
+                put("message", "No active screen capture frame available.")
+            }
+            conn.send(errorJson.toString())
             return
         }
 
         serverScope.launch {
             try {
-                val result = spatialVisionEngine.analyzeFrame(
-                    bitmap = bitmap,
-                    screenWidth = screenWidth,
-                    screenHeight = screenHeight,
-                    autoRegisterPrivacyMasks = true
-                )
+                spatialVisionEngine.processFrame(bitmap) { recognizedBlocks, inferenceLatencyMs ->
+                    engineTelemetry.setInferenceLatencyMs(inferenceLatencyMs)
 
-                val responseJson = result.toJson()
-                session.send(Frame.Text(responseJson.toString()))
-                eventListener?.onOcrCompleted(result.fullText, result.blockCount)
-                Log.i(TAG, "SpatialVisionEngine OCR completed: ${result.blockCount} blocks found (${result.autoMasksAdded} sensitive regions auto-masked).")
+                    // Apply zero-trust privacy redaction to flag sensitive blocks
+                    val redactedBitmap = PrivacyRedactor.redactBitmap(bitmap, recognizedBlocks)
+                    if (redactedBitmap != bitmap && !redactedBitmap.isRecycled) {
+                        redactedBitmap.recycle()
+                    }
+
+                    val blocksArray = JSONArray()
+                    for (block in recognizedBlocks) {
+                        val blockObj = JSONObject().apply {
+                            put("text", block.text)
+                            put("isSensitive", block.isSensitive)
+
+                            val boundsObj = JSONObject().apply {
+                                put("normLeft", block.bounds.normLeft)
+                                put("normTop", block.bounds.normTop)
+                                put("normRight", block.bounds.normRight)
+                                put("normBottom", block.bounds.normBottom)
+                            }
+                            put("bounds", boundsObj)
+
+                            val centroidObj = JSONObject().apply {
+                                put("x", block.centroid.x)
+                                put("y", block.centroid.y)
+                            }
+                            put("centroid", centroidObj)
+
+                            val rawRectObj = JSONObject().apply {
+                                put("left", block.rawRect.left)
+                                put("top", block.rawRect.top)
+                                put("right", block.rawRect.right)
+                                put("bottom", block.rawRect.bottom)
+                            }
+                            put("rawRect", rawRectObj)
+                        }
+                        blocksArray.put(blockObj)
+                    }
+
+                    val responseJson = JSONObject().apply {
+                        put("type", "OCR_DETECTION")
+                        put("action", "OCR_DETECTION")
+                        put("inferenceMs", inferenceLatencyMs)
+                        put("blockCount", recognizedBlocks.size)
+                        put("blocks", blocksArray)
+                        put("timestamp", System.currentTimeMillis())
+                    }
+
+                    conn.send(responseJson.toString())
+                    eventListener?.onOcrCompleted(
+                        recognizedBlocks.joinToString("\n") { it.text },
+                        recognizedBlocks.size
+                    )
+                    Log.i(TAG, "OCR_DETECTION returned ${recognizedBlocks.size} blocks in ${inferenceLatencyMs}ms")
+                }
             } catch (e: Exception) {
-                Log.e(TAG, "Error during SpatialVisionEngine OCR processing: ${e.message}", e)
-                sendOcrError(session, "OCR processing error: ${e.message}")
+                Log.e(TAG, "Error processing SCAN_OCR: ${e.message}", e)
+                val errorJson = JSONObject().apply {
+                    put("type", "OCR_ERROR")
+                    put("message", e.message ?: "OCR execution failure")
+                }
+                conn.send(errorJson.toString())
             }
         }
     }
 
-    private fun sendOcrError(session: WebSocketSession, errorMsg: String) {
-        val errorJson = JSONObject().apply {
-            put("type", "ocr_error")
-            put("message", errorMsg)
+    /**
+     * Handles `PLAY_MACRO`: Executes [SelfHealingMacroEngine] against current frame.
+     */
+    private fun handlePlayMacroRequest(conn: WebSocket, json: JSONObject) {
+        val targetText = json.optString("targetText", "")
+        val fallbackX = json.optDouble("x", json.optDouble("fallbackX", 0.5)).toFloat()
+        val fallbackY = json.optDouble("y", json.optDouble("fallbackY", 0.5)).toFloat()
+
+        val bitmap = latestFrameProvider() ?: run {
+            // If no frame is available, fallback directly
+            val targetX = fallbackX * screenWidth
+            val targetY = fallbackY * screenHeight
+            ZenithAccessibilityService.instance?.dispatchTap(targetX, targetY)
+
+            val fallbackResponse = JSONObject().apply {
+                put("type", "MACRO_RESULT")
+                put("action", "PLAY_MACRO")
+                put("targetText", targetText)
+                put("status", SelfHealingMacroEngine.RESULT_FALLBACK)
+            }
+            conn.send(fallbackResponse.toString())
+            return
         }
+
         serverScope.launch {
             try {
-                session.send(Frame.Text(errorJson.toString()))
-            } catch (ignored: Exception) {}
+                val action = SelfHealingMacroEngine.MacroAction(
+                    targetText = targetText,
+                    fallbackXRatio = fallbackX,
+                    fallbackYRatio = fallbackY
+                )
+                val resultStatus = selfHealingMacroEngine.executeAction(
+                    action = action,
+                    currentBitmap = bitmap,
+                    screenWidth = screenWidth,
+                    screenHeight = screenHeight
+                )
+
+                val responseJson = JSONObject().apply {
+                    put("type", "MACRO_RESULT")
+                    put("action", "PLAY_MACRO")
+                    put("targetText", targetText)
+                    put("status", resultStatus)
+                    put("timestamp", System.currentTimeMillis())
+                }
+                conn.send(responseJson.toString())
+            } catch (e: Exception) {
+                Log.e(TAG, "Error executing self-healing macro: ${e.message}", e)
+                val errorJson = JSONObject().apply {
+                    put("type", "MACRO_ERROR")
+                    put("message", e.message ?: "Macro execution failed")
+                }
+                conn.send(errorJson.toString())
+            }
         }
     }
 
-    fun stop() {
+    /**
+     * Broadcasts a compressed JPEG ByteArray frame to all connected WebSocket clients.
+     */
+    fun broadcastFrame(jpegBytes: ByteArray) {
+        if (connectedClients.isEmpty()) return
+
+        try {
+            broadcast(jpegBytes)
+            engineTelemetry.recordFrameDispatch()
+        } catch (e: Exception) {
+            Log.w(TAG, "Error broadcasting frame: ${e.message}")
+        }
+    }
+
+    /**
+     * Broadcasts a JSON payload string to all connected WebSocket clients.
+     */
+    fun broadcastJson(json: JSONObject) {
+        if (connectedClients.isEmpty()) return
+
+        val message = json.toString()
+        try {
+            broadcast(message)
+        } catch (e: Exception) {
+            Log.w(TAG, "Error broadcasting JSON: ${e.message}")
+        }
+    }
+
+    /**
+     * Compatibility telemetry broadcaster.
+     */
+    fun broadcastTelemetry(
+        fps: Float,
+        npuLatencyMs: Float,
+        detections: List<ZenithDetector.Detection>,
+        logMessage: String? = null
+    ) {
+        engineTelemetry.setInferenceLatencyMs(npuLatencyMs.toLong())
+        val json = engineTelemetry.collectTelemetryJson().apply {
+            if (logMessage != null) put("logMessage", logMessage)
+        }
+        broadcastJson(json)
+    }
+
+    fun recordMetrics(latencyMs: Long, npuMs: Float, detections: List<ZenithDetector.Detection>) {
+        engineTelemetry.setLatencyMs(latencyMs)
+        engineTelemetry.setInferenceLatencyMs(npuMs.toLong())
+    }
+
+    fun getRollingFps(): Int = engineTelemetry.getRollingFps()
+
+    fun stopServer() {
         close()
     }
 
     override fun close() {
         serverScope.cancel()
+        engineTelemetry.close()
         spatialVisionEngine.close()
-        voiceControlEngine.destroy()
 
         try {
-            ktorServer?.stop(500, 1500)
-            ktorServer = null
-            streamSessions.clear()
-            controlSessions.clear()
+            stop(1000)
+            connectedClients.clear()
             Log.i(TAG, "ZenithStreamServer stopped.")
         } catch (e: Exception) {
             Log.e(TAG, "Error closing ZenithStreamServer: ${e.message}", e)
         }
     }
 }
-

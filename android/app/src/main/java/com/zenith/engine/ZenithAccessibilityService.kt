@@ -7,12 +7,13 @@ import android.graphics.Path
 import android.os.Build
 import android.util.Log
 import android.view.accessibility.AccessibilityEvent
+import android.view.accessibility.AccessibilityNodeInfo
 
 /**
- * ZenithAccessibilityService: High-Precision Remote Touch & Gesture Dispatcher.
+ * ZenithAccessibilityService: High-Precision Remote Touch & Accessibility Gesture Dispatcher.
  *
- * Receives normalized viewport coordinates (0.0 to 1.0) from the local WebSocket streaming server
- * and injects native taps and swipe gestures across the Android OS.
+ * Implements low-latency gesture injection for spatial automation, self-healing macros,
+ * and remote web command tele-operation.
  */
 class ZenithAccessibilityService : AccessibilityService() {
 
@@ -25,19 +26,24 @@ class ZenithAccessibilityService : AccessibilityService() {
         fun isRunning(): Boolean = instance != null
 
         /**
-         * Dispatches a native tap gesture at normalized screen coordinates.
-         *
-         * @param normX Horizontal coordinate [0.0, 1.0]
-         * @param normY Vertical coordinate [0.0, 1.0]
+         * Dispatches a native tap at raw pixel coordinates with a completion callback.
          */
-        fun performTap(normX: Float, normY: Float) {
+        fun dispatchTap(xPixels: Float, yPixels: Float, callback: (Boolean) -> Unit = {}) {
             val service = instance ?: run {
-                Log.w(TAG, "ZenithAccessibilityService is not enabled or instance is null. Cannot perform tap.")
+                Log.w(TAG, "ZenithAccessibilityService is not connected. Cannot dispatch tap.")
+                callback(false)
                 return
             }
+            service.dispatchTap(xPixels, yPixels, callback)
+        }
 
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
-                Log.e(TAG, "Gesture dispatching requires Android 7.0+ (API 24+)")
+        /**
+         * Dispatches a native tap gesture at normalized screen coordinates [0.0 to 1.0].
+         */
+        fun performTap(normX: Float, normY: Float, callback: (Boolean) -> Unit = {}) {
+            val service = instance ?: run {
+                Log.w(TAG, "ZenithAccessibilityService is not connected. Cannot perform tap.")
+                callback(false)
                 return
             }
 
@@ -45,22 +51,7 @@ class ZenithAccessibilityService : AccessibilityService() {
             val targetX = (normX * metrics.widthPixels).coerceIn(0f, metrics.widthPixels.toFloat())
             val targetY = (normY * metrics.heightPixels).coerceIn(0f, metrics.heightPixels.toFloat())
 
-            val path = Path().apply {
-                moveTo(targetX, targetY)
-            }
-
-            val stroke = GestureDescription.StrokeDescription(path, 0, 50)
-            val gesture = GestureDescription.Builder().addStroke(stroke).build()
-
-            service.dispatchGesture(gesture, object : GestureResultCallback() {
-                override fun onCompleted(gestureDescription: GestureDescription?) {
-                    Log.d(TAG, "Remote tap completed at ($targetX, $targetY)")
-                }
-
-                override fun onCancelled(gestureDescription: GestureDescription?) {
-                    Log.w(TAG, "Remote tap cancelled at ($targetX, $targetY)")
-                }
-            }, null)
+            service.dispatchTap(targetX, targetY, callback)
         }
 
         fun injectTap(normX: Float, normY: Float) = performTap(normX, normY)
@@ -73,13 +64,18 @@ class ZenithAccessibilityService : AccessibilityService() {
             startY: Float,
             endX: Float,
             endY: Float,
-            durationMs: Long = 250L
+            durationMs: Long = 250L,
+            callback: (Boolean) -> Unit = {}
         ) {
             val service = instance ?: run {
-                Log.w(TAG, "ZenithAccessibilityService is not enabled. Cannot perform swipe.")
+                Log.w(TAG, "ZenithAccessibilityService is not connected. Cannot perform swipe.")
+                callback(false)
                 return
             }
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+                callback(false)
+                return
+            }
 
             val metrics = service.resources.displayMetrics
             val x1 = (startX * metrics.widthPixels).coerceIn(0f, metrics.widthPixels.toFloat())
@@ -92,11 +88,20 @@ class ZenithAccessibilityService : AccessibilityService() {
                 lineTo(x2, y2)
             }
 
-            val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(100L))
+            val stroke = GestureDescription.StrokeDescription(path, 0, durationMs.coerceAtLeast(50L))
             val gesture = GestureDescription.Builder().addStroke(stroke).build()
 
-            service.dispatchGesture(gesture, null, null)
-            Log.d(TAG, "Remote swipe dispatched from ($x1, $y1) to ($x2, $y2)")
+            service.dispatchGesture(gesture, object : GestureResultCallback() {
+                override fun onCompleted(gestureDescription: GestureDescription?) {
+                    Log.d(TAG, "Swipe completed from ($x1, $y1) to ($x2, $y2)")
+                    callback(true)
+                }
+
+                override fun onCancelled(gestureDescription: GestureDescription?) {
+                    Log.w(TAG, "Swipe cancelled from ($x1, $y1) to ($x2, $y2)")
+                    callback(false)
+                }
+            }, null)
         }
 
         fun injectSwipe(startX: Float, startY: Float, endX: Float, endY: Float, durationMs: Long = 250L) =
@@ -124,18 +129,18 @@ class ZenithAccessibilityService : AccessibilityService() {
             val service = instance ?: return false
             try {
                 val root = service.rootInActiveWindow ?: return false
-                val focusedNode = root.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_INPUT)
-                    ?: root.findFocus(android.view.accessibility.AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
+                val focusedNode = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                    ?: root.findFocus(AccessibilityNodeInfo.FOCUS_ACCESSIBILITY)
                     ?: return false
 
                 val arguments = android.os.Bundle().apply {
                     putCharSequence(
-                        android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
                         text
                     )
                 }
                 val success = focusedNode.performAction(
-                    android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,
+                    AccessibilityNodeInfo.ACTION_SET_TEXT,
                     arguments
                 )
                 Log.i(TAG, "injectTextToFocus executed (Success: $success, Text: $text)")
@@ -145,6 +150,36 @@ class ZenithAccessibilityService : AccessibilityService() {
                 return false
             }
         }
+    }
+
+    /**
+     * Dispatches a tap gesture at raw physical pixel coordinates (xPixels, yPixels) with a callback.
+     */
+    fun dispatchTap(xPixels: Float, yPixels: Float, callback: (Boolean) -> Unit = {}) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+            Log.e(TAG, "Gesture dispatching requires Android 7.0+ (API 24+)")
+            callback(false)
+            return
+        }
+
+        val path = Path().apply {
+            moveTo(xPixels, yPixels)
+        }
+
+        val stroke = GestureDescription.StrokeDescription(path, 0, 50)
+        val gesture = GestureDescription.Builder().addStroke(stroke).build()
+
+        dispatchGesture(gesture, object : GestureResultCallback() {
+            override fun onCompleted(gestureDescription: GestureDescription?) {
+                Log.d(TAG, "Tap completed at ($xPixels, $yPixels)")
+                callback(true)
+            }
+
+            override fun onCancelled(gestureDescription: GestureDescription?) {
+                Log.w(TAG, "Tap cancelled at ($xPixels, $yPixels)")
+                callback(false)
+            }
+        }, null)
     }
 
     override fun onServiceConnected() {
@@ -160,7 +195,7 @@ class ZenithAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Accessibility events
+        // Handled as required
     }
 
     override fun onInterrupt() {

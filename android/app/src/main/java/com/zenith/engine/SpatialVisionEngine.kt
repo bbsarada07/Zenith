@@ -1,10 +1,10 @@
 package com.zenith.engine
 
 import android.graphics.Bitmap
-import android.graphics.RectF
+import android.graphics.Rect
+import android.os.SystemClock
 import android.util.Log
 import com.google.mlkit.vision.common.InputImage
-import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -13,37 +13,43 @@ import org.json.JSONObject
 import kotlin.coroutines.resume
 
 /**
- * SpatialVisionEngine: On-Device ML Kit OCR, Sensitive Privacy Redaction & Spatial Intent Engine.
+ * SpatialVisionEngine: Low-Latency On-Device ML Kit OCR and Spatial Geometry Extraction.
  *
- * Capabilities:
- * 1. Analyzes active screen bitmaps on-device via Google ML Kit Text Recognition.
- * 2. Normalizes text block bounding boxes to normalized coordinates [0.0, 1.0] for responsive remote canvas reticles.
- * 3. Zero-Trust Redaction: Employs regex patterns for credit cards, passwords, PINs, and OTP verification codes,
- *    automatically enrolling sensitive bounding rectangles into ScreenCaptureService.activePrivacyMasks.
- * 4. Actionable Semantic Intent Tagging: Labels actionable elements ("Pay", "Submit", "Settings", "Confirm", etc.).
+ * Implements real-time text recognition on Android screen frames, normalizing pixel coordinates
+ * into viewport spatial ratios [0.0, 1.0] and computing centroid targets for spatial tele-operation.
  */
 class SpatialVisionEngine : AutoCloseable {
 
     companion object {
         private const val TAG = "SpatialVisionEngine"
-
-        // Sensitive pattern regular expressions
-        private val CREDIT_CARD_REGEX = Regex("""\b(?:\d[ -]*?){13,16}\b""")
-        private val SENSITIVE_LABEL_REGEX = Regex("""(?i)\b(password|pin|cvv|cvc|ssn|secret|passcode|token|key)\b[:\s]*\S+""")
-        private val OTP_REGEX = Regex("""(?i)\b(otp|code|verification|auth)\b[:\s]*\d{4,8}|\b\d{6}\b""")
-
-        // Actionable UI categories for autonomous tele-operation
-        private val ACTIONABLE_KEYWORDS = listOf(
-            "Pay", "Submit", "Allow", "Confirm", "Settings", "Search", "Login",
-            "Sign In", "Cart", "Cancel", "Back", "Delete", "Done", "Next", "Save", "Continue", "Order", "Checkout"
-        )
     }
 
+    data class NormalizedRect(
+        val normLeft: Float,
+        val normTop: Float,
+        val normRight: Float,
+        val normBottom: Float
+    )
+
+    data class Centroid(
+        val x: Float,
+        val y: Float
+    )
+
+    data class RecognizedBlock(
+        val text: String,
+        val bounds: NormalizedRect,
+        val centroid: Centroid,
+        val rawRect: Rect,
+        var isSensitive: Boolean = false
+    )
+
+    // Legacy OcrBlock / OcrAnalysisResult for backwards compatibility
     data class OcrBlock(
         val text: String,
-        val normBounds: FloatArray, // [left, top, right, bottom] in 0.0..1.0
+        val normBounds: FloatArray,
         val isSensitive: Boolean,
-        val category: String?
+        val category: String? = null
     )
 
     data class OcrAnalysisResult(
@@ -90,103 +96,111 @@ class SpatialVisionEngine : AutoCloseable {
     }
 
     /**
-     * Performs asynchronous OCR text recognition, sensitive redaction registration, and coordinate normalization.
+     * Processes a single screen capture Bitmap frame with Google ML Kit Text Recognition.
+     * Computes normalized bounding coordinates [0.0, 1.0], centroid targets, and execution latency.
+     *
+     * @param bitmap The live screen capture frame.
+     * @param onComplete Callback delivering the list of recognized spatial blocks and inference latency in ms.
+     */
+    fun processFrame(bitmap: Bitmap, onComplete: (List<RecognizedBlock>, Long) -> Unit) {
+        val startTime = SystemClock.elapsedRealtime()
+        try {
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            textRecognizer.process(inputImage)
+                .addOnSuccessListener { visionText ->
+                    val npuInferenceMs = SystemClock.elapsedRealtime() - startTime
+                    val recognizedBlocks = mutableListOf<RecognizedBlock>()
+                    val widthF = bitmap.width.toFloat().coerceAtLeast(1f)
+                    val heightF = bitmap.height.toFloat().coerceAtLeast(1f)
+
+                    for (block in visionText.textBlocks) {
+                        val text = block.text
+                        val rawRect = block.boundingBox ?: Rect(0, 0, 0, 0)
+
+                        val normLeft = (rawRect.left / widthF).coerceIn(0f, 1f)
+                        val normTop = (rawRect.top / heightF).coerceIn(0f, 1f)
+                        val normRight = (rawRect.right / widthF).coerceIn(0f, 1f)
+                        val normBottom = (rawRect.bottom / heightF).coerceIn(0f, 1f)
+
+                        val bounds = NormalizedRect(
+                            normLeft = normLeft,
+                            normTop = normTop,
+                            normRight = normRight,
+                            normBottom = normBottom
+                        )
+
+                        val centroid = Centroid(
+                            x = ((normLeft + normRight) / 2f).coerceIn(0f, 1f),
+                            y = ((normTop + normBottom) / 2f).coerceIn(0f, 1f)
+                        )
+
+                        recognizedBlocks.add(
+                            RecognizedBlock(
+                                text = text,
+                                bounds = bounds,
+                                centroid = centroid,
+                                rawRect = rawRect,
+                                isSensitive = false
+                            )
+                        )
+                    }
+
+                    Log.d(TAG, "processFrame completed: ${recognizedBlocks.size} blocks in ${npuInferenceMs}ms")
+                    onComplete(recognizedBlocks, npuInferenceMs)
+                }
+                .addOnFailureListener { e ->
+                    val npuInferenceMs = SystemClock.elapsedRealtime() - startTime
+                    Log.e(TAG, "ML Kit OCR failed: ${e.message}", e)
+                    onComplete(emptyList(), npuInferenceMs)
+                }
+        } catch (e: Exception) {
+            val npuInferenceMs = SystemClock.elapsedRealtime() - startTime
+            Log.e(TAG, "Error executing processFrame: ${e.message}", e)
+            onComplete(emptyList(), npuInferenceMs)
+        }
+    }
+
+    /**
+     * Coroutine suspend wrapper for [processFrame].
+     */
+    suspend fun processFrameSuspend(bitmap: Bitmap): Pair<List<RecognizedBlock>, Long> =
+        suspendCancellableCoroutine { continuation ->
+            processFrame(bitmap) { blocks, latencyMs ->
+                continuation.resume(Pair(blocks, latencyMs))
+            }
+        }
+
+    /**
+     * Legacy analyzeFrame method for backward compatibility with voice and context analysis.
      */
     suspend fun analyzeFrame(
         bitmap: Bitmap,
         screenWidth: Int = bitmap.width,
         screenHeight: Int = bitmap.height,
         autoRegisterPrivacyMasks: Boolean = true
-    ): OcrAnalysisResult = suspendCancellableCoroutine { continuation ->
-        try {
-            val inputImage = InputImage.fromBitmap(bitmap, 0)
-            textRecognizer.process(inputImage)
-                .addOnSuccessListener { visionText ->
-                    val blocksList = mutableListOf<OcrBlock>()
-                    var autoMasksAdded = 0
-                    val widthF = bitmap.width.toFloat().coerceAtLeast(1f)
-                    val heightF = bitmap.height.toFloat().coerceAtLeast(1f)
-
-                    for (block in visionText.textBlocks) {
-                        val text = block.text
-                        val rect = block.boundingBox
-
-                        val isSensitive = CREDIT_CARD_REGEX.containsMatchIn(text) ||
-                                SENSITIVE_LABEL_REGEX.containsMatchIn(text) ||
-                                OTP_REGEX.containsMatchIn(text)
-
-                        val normLeft = if (rect != null) (rect.left / widthF).coerceIn(0f, 1f) else 0f
-                        val normTop = if (rect != null) (rect.top / heightF).coerceIn(0f, 1f) else 0f
-                        val normRight = if (rect != null) (rect.right / widthF).coerceIn(0f, 1f) else 1f
-                        val normBottom = if (rect != null) (rect.bottom / heightF).coerceIn(0f, 1f) else 1f
-
-                        if (isSensitive && rect != null && autoRegisterPrivacyMasks) {
-                            // Scale to screen metrics for accurate canvas privacy mask drawing
-                            val maskRect = RectF(
-                                normLeft * screenWidth,
-                                normTop * screenHeight,
-                                normRight * screenWidth,
-                                normBottom * screenHeight
-                            )
-                            ScreenCaptureService.addPrivacyMask(maskRect)
-                            autoMasksAdded++
-                        }
-
-                        var matchedCategory: String? = null
-                        for (kw in ACTIONABLE_KEYWORDS) {
-                            if (text.contains(kw, ignoreCase = true)) {
-                                matchedCategory = kw
-                                break
-                            }
-                        }
-
-                        blocksList.add(
-                            OcrBlock(
-                                text = text,
-                                normBounds = floatArrayOf(normLeft, normTop, normRight, normBottom),
-                                isSensitive = isSensitive,
-                                category = matchedCategory
-                            )
-                        )
-                    }
-
-                    val result = OcrAnalysisResult(
-                        fullText = visionText.text,
-                        blockCount = visionText.textBlocks.size,
-                        blocks = blocksList,
-                        autoMasksAdded = autoMasksAdded,
-                        frameWidth = bitmap.width,
-                        frameHeight = bitmap.height
-                    )
-                    Log.i(TAG, "OCR Analysis complete: ${blocksList.size} blocks found ($autoMasksAdded redacted).")
-                    continuation.resume(result)
-                }
-                .addOnFailureListener { e ->
-                    Log.e(TAG, "ML Kit OCR failed: ${e.message}", e)
-                    continuation.resume(
-                        OcrAnalysisResult(
-                            fullText = "",
-                            blockCount = 0,
-                            blocks = emptyList(),
-                            autoMasksAdded = 0,
-                            frameWidth = bitmap.width,
-                            frameHeight = bitmap.height
-                        )
-                    )
-                }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error initiating ML Kit OCR: ${e.message}", e)
-            continuation.resume(
-                OcrAnalysisResult(
-                    fullText = "",
-                    blockCount = 0,
-                    blocks = emptyList(),
-                    autoMasksAdded = 0,
-                    frameWidth = bitmap.width,
-                    frameHeight = bitmap.height
-                )
+    ): OcrAnalysisResult {
+        val (blocks, _) = processFrameSuspend(bitmap)
+        val legacyBlocks = blocks.map { b ->
+            OcrBlock(
+                text = b.text,
+                normBounds = floatArrayOf(
+                    b.bounds.normLeft,
+                    b.bounds.normTop,
+                    b.bounds.normRight,
+                    b.bounds.normBottom
+                ),
+                isSensitive = b.isSensitive
             )
         }
+
+        return OcrAnalysisResult(
+            fullText = blocks.joinToString("\n") { it.text },
+            blockCount = blocks.size,
+            blocks = legacyBlocks,
+            autoMasksAdded = 0,
+            frameWidth = bitmap.width,
+            frameHeight = bitmap.height
+        )
     }
 
     override fun close() {

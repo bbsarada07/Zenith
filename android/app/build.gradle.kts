@@ -51,13 +51,16 @@ dependencies {
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.20.0")
 
     // Google ML Kit Text Recognition (On-Device OCR & Vision Intelligence)
-    implementation("com.google.mlkit:text-recognition:16.0.0")
+    implementation("com.google.mlkit:text-recognition:16.0.1")
 
     // ZXing QR Code Generation for Instant Pairing
     implementation("com.google.zxing:core:3.5.3")
 
     // High-Throughput Embedded WebSocket Server for Telemetry
-    implementation("org.java-websocket:Java-WebSocket:1.5.7")
+    implementation("org.java-websocket:Java-WebSocket:1.5.3")
+
+    // JSON Library
+    implementation("org.json:json:20231013")
 
     // Embedded Ktor Server for Web Dashboard & Multi-Device Streaming
     implementation("io.ktor:ktor-server-core:2.3.10")
