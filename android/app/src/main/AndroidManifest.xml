@@ -51,6 +51,12 @@
             android:exported="false"
             android:foregroundServiceType="mediaProjection" />
 
+        <service
+            android:name=".ZenithCaptureService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
         <!-- Remote Gesture & Accessibility Service -->
         <service
             android:name=".ZenithAccessibilityService"

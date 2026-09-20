@@ -1,5 +1,6 @@
 package com.zenith.engine
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.os.SystemClock
 import android.util.Log
@@ -12,22 +13,25 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
+import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlin.coroutines.resume
 
 /**
- * MacroEngine: Spatial Macro Recording & Self-Healing Autonomous Playback Engine.
+ * MacroEngine: Production Spatial Macro Recorder & Persistent Autonomous Execution Engine.
  *
  * Capabilities:
  * 1. Sequences user touch/swipe inputs with accurate inter-step timestamp delays.
- * 2. Serializes/deserializes automation workflows to/from JSON.
- * 3. Self-Healing Execution: Before dispatching a gesture step with a known semantic label,
- *    verifies current screen state using local ML Kit OCR. If the target element shifted,
- *    dynamically recalculates (x, y) touch targets.
+ * 2. Persistent Storage: Saves and loads named automation recipes to `/data/user/0/com.zenith/files/macros/`.
+ * 3. Self-Healing Execution: Uses local OCR to dynamically relocate UI elements before dispatching gestures.
+ * 4. WebSocket Management API: Exposes START_RECORD, STOP_RECORD, GET_MACROS, SAVE_MACRO, DELETE_MACRO, EXECUTE_MACRO.
  */
 class MacroEngine(
+    private val context: Context? = null,
     private val frameProvider: () -> Bitmap? = { null }
 ) {
 
@@ -50,6 +54,46 @@ class MacroEngine(
         val payload: String? = null
     )
 
+    data class MacroRecipe(
+        val id: String,
+        val name: String,
+        val createdAt: Long,
+        val steps: List<MacroStep>
+    ) {
+        fun toJson(): JSONObject = JSONObject().apply {
+            put("id", id)
+            put("name", name)
+            put("createdAt", createdAt)
+            put("stepCount", steps.size)
+            val stepsArray = JSONArray()
+            for (step in steps) {
+                val stepObj = JSONObject().apply {
+                    put("step", step.stepNumber)
+                    put("type", step.type)
+                    put("delay_ms", step.delayMs)
+                    if (step.label != null) put("label", step.label)
+                    if (step.payload != null) put("payload", step.payload)
+
+                    when (step.type) {
+                        "tap" -> {
+                            put("x", step.x.toDouble())
+                            put("y", step.y.toDouble())
+                        }
+                        "swipe" -> {
+                            put("startX", step.startX.toDouble())
+                            put("startY", step.startY.toDouble())
+                            put("endX", step.endX.toDouble())
+                            put("endY", step.endY.toDouble())
+                            put("durationMs", step.durationMs)
+                        }
+                    }
+                }
+                stepsArray.put(stepObj)
+            }
+            put("steps", stepsArray)
+        }
+    }
+
     private val engineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val recordedSteps = CopyOnWriteArrayList<MacroStep>()
     @Volatile var isRecording: Boolean = false
@@ -61,6 +105,14 @@ class MacroEngine(
 
     private val textRecognizer by lazy {
         TextRecognition.getClient(TextRecognizerOptions.DEFAULT_OPTIONS)
+    }
+
+    private val macrosDir: File? by lazy {
+        context?.let { ctx ->
+            File(ctx.filesDir, "macros").apply {
+                if (!exists()) mkdirs()
+            }
+        }
     }
 
     fun startRecording() {
@@ -108,79 +160,135 @@ class MacroEngine(
         Log.d(TAG, "Recorded step #${step.stepNumber}: SWIPE ($startX,$startY)->($endX,$endY) after ${delay}ms")
     }
 
-    fun stopRecording(): String {
+    fun stopRecording(saveName: String? = null): JSONObject {
         isRecording = false
-        val jsonArray = exportToJson()
-        Log.i(TAG, "Macro recording stopped. Total steps: ${recordedSteps.size}")
-        return jsonArray.toString()
+        val macroId = UUID.randomUUID().toString().take(8)
+        val name = saveName ?: "Macro_$macroId"
+        val recipe = MacroRecipe(
+            id = macroId,
+            name = name,
+            createdAt = System.currentTimeMillis(),
+            steps = recordedSteps.toList()
+        )
+
+        // Persist to internal storage
+        saveMacroRecipe(recipe)
+        Log.i(TAG, "Macro recording stopped and saved: '$name' (${recordedSteps.size} steps)")
+        return recipe.toJson()
     }
 
-    fun exportToJson(): JSONArray {
-        val array = JSONArray()
-        for (step in recordedSteps) {
-            val obj = JSONObject().apply {
-                put("step", step.stepNumber)
-                put("type", step.type)
-                put("delay_ms", step.delayMs)
-                if (step.label != null) put("label", step.label)
-                if (step.payload != null) put("payload", step.payload)
+    // --- Persistence Management ---
 
-                when (step.type) {
-                    "tap" -> {
-                        put("x", step.x.toDouble())
-                        put("y", step.y.toDouble())
-                    }
-                    "swipe" -> {
-                        put("startX", step.startX.toDouble())
-                        put("startY", step.startY.toDouble())
-                        put("endX", step.endX.toDouble())
-                        put("endY", step.endY.toDouble())
-                        put("durationMs", step.durationMs)
-                    }
-                }
-            }
-            array.put(obj)
+    fun saveMacroRecipe(recipe: MacroRecipe): Boolean {
+        val dir = macrosDir ?: return false
+        return try {
+            val file = File(dir, "${recipe.id}.json")
+            file.writeText(recipe.toJson().toString(2))
+            Log.i(TAG, "Saved macro to ${file.absolutePath}")
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to save macro recipe ${recipe.id}: ${e.message}", e)
+            false
         }
-        return array
     }
 
-    fun parseFromJson(jsonString: String): List<MacroStep> {
-        val list = mutableListOf<MacroStep>()
+    fun loadMacroRecipe(id: String): MacroRecipe? {
+        val dir = macrosDir ?: return null
+        return try {
+            val file = File(dir, "$id.json")
+            if (!file.exists()) return null
+            val json = JSONObject(file.readText())
+            parseRecipeFromJson(json)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to load macro $id: ${e.message}", e)
+            null
+        }
+    }
+
+    fun listSavedMacros(): List<JSONObject> {
+        val dir = macrosDir ?: return emptyList()
+        val list = mutableListOf<JSONObject>()
         try {
-            val array = JSONArray(jsonString)
-            for (i in 0 until array.length()) {
-                val obj = array.getJSONObject(i)
-                val step = MacroStep(
-                    stepNumber = obj.optInt("step", i + 1),
-                    type = obj.optString("type", "tap"),
-                    x = obj.optDouble("x", 0.5).toFloat(),
-                    y = obj.optDouble("y", 0.5).toFloat(),
-                    startX = obj.optDouble("startX", 0.5).toFloat(),
-                    startY = obj.optDouble("startY", 0.8).toFloat(),
-                    endX = obj.optDouble("endX", 0.5).toFloat(),
-                    endY = obj.optDouble("endY", 0.2).toFloat(),
-                    durationMs = obj.optLong("durationMs", 250L),
-                    delayMs = obj.optLong("delay_ms", 500L),
-                    label = if (obj.has("label")) obj.getString("label") else null,
-                    payload = if (obj.has("payload")) obj.getString("payload") else null
-                )
-                list.add(step)
+            val files = dir.listFiles { f -> f.extension == "json" } ?: emptyArray()
+            for (f in files) {
+                try {
+                    val json = JSONObject(f.readText())
+                    list.add(JSONObject().apply {
+                        put("id", json.optString("id", f.nameWithoutExtension))
+                        put("name", json.optString("name", "Unnamed Macro"))
+                        put("createdAt", json.optLong("createdAt", f.lastModified()))
+                        put("stepCount", json.optInt("stepCount", 0))
+                    })
+                } catch (ignored: Exception) {}
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Error parsing macro JSON: ${e.message}", e)
+            Log.e(TAG, "Error listing macros: ${e.message}", e)
         }
         return list
     }
 
-    /**
-     * Executes macro playback with Self-Healing coordinate verification.
-     */
+    fun deleteMacro(id: String): Boolean {
+        val dir = macrosDir ?: return false
+        val file = File(dir, "$id.json")
+        return file.delete()
+    }
+
+    fun parseRecipeFromJson(json: JSONObject): MacroRecipe {
+        val id = json.optString("id", UUID.randomUUID().toString().take(8))
+        val name = json.optString("name", "Macro_$id")
+        val createdAt = json.optLong("createdAt", System.currentTimeMillis())
+        val stepsArray = json.optJSONArray("steps") ?: JSONArray()
+        val steps = parseStepsFromJsonArray(stepsArray)
+        return MacroRecipe(id, name, createdAt, steps)
+    }
+
+    fun parseStepsFromJsonArray(array: JSONArray): List<MacroStep> {
+        val list = mutableListOf<MacroStep>()
+        for (i in 0 until array.length()) {
+            val obj = array.getJSONObject(i)
+            val step = MacroStep(
+                stepNumber = obj.optInt("step", i + 1),
+                type = obj.optString("type", "tap"),
+                x = obj.optDouble("x", 0.5).toFloat(),
+                y = obj.optDouble("y", 0.5).toFloat(),
+                startX = obj.optDouble("startX", 0.5).toFloat(),
+                startY = obj.optDouble("startY", 0.8).toFloat(),
+                endX = obj.optDouble("endX", 0.5).toFloat(),
+                endY = obj.optDouble("endY", 0.2).toFloat(),
+                durationMs = obj.optLong("durationMs", 250L),
+                delayMs = obj.optLong("delay_ms", 500L),
+                label = if (obj.has("label")) obj.getString("label") else null,
+                payload = if (obj.has("payload")) obj.getString("payload") else null
+            )
+            list.add(step)
+        }
+        return list
+    }
+
+    // --- Execution & Self-Healing Playback ---
+
     fun playMacro(
         macroJson: String? = null,
+        macroId: String? = null,
         enableSelfHealing: Boolean = true,
         onStepProgress: ((stepNum: Int, total: Int, desc: String) -> Unit)? = null
     ) {
-        val steps = if (!macroJson.isNullOrBlank()) parseFromJson(macroJson) else recordedSteps.toList()
+        val steps: List<MacroStep> = when {
+            !macroId.isNullOrBlank() -> loadMacroRecipe(macroId)?.steps ?: emptyList()
+            !macroJson.isNullOrBlank() -> {
+                try {
+                    if (macroJson.trim().startsWith("{")) {
+                        parseRecipeFromJson(JSONObject(macroJson)).steps
+                    } else {
+                        parseStepsFromJsonArray(JSONArray(macroJson))
+                    }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+            else -> recordedSteps.toList()
+        }
+
         if (steps.isEmpty()) {
             Log.w(TAG, "Cannot play macro: step list is empty.")
             return
@@ -204,7 +312,7 @@ class MacroEngine(
                     var targetX = step.x
                     var targetY = step.y
 
-                    // Self-Healing Coordinate Check: If label is present, search active viewport
+                    // Self-Healing Coordinate Check: If label is present, verify on-screen
                     if (enableSelfHealing && !step.label.isNullOrBlank()) {
                         val healedCoords = locateElementByOcr(step.label)
                         if (healedCoords != null) {
@@ -216,7 +324,7 @@ class MacroEngine(
 
                     val desc = when (step.type) {
                         "tap" -> {
-                            ZenithAccessibilityService.performTap(targetX, targetY)
+                            ZenithAccessibilityService.performClickAt(targetX, targetY)
                             "Tapped at (${(targetX * 100).toInt()}%, ${(targetY * 100).toInt()}%)"
                         }
                         "swipe" -> {

@@ -118,7 +118,7 @@ class SpatialPlanExecutor(
                             val centerX = targetElement.bounds.centerX().toFloat()
                             val centerY = targetElement.bounds.centerY().toFloat()
 
-                            ZenithAccessibilityService.instance?.dispatchTap(centerX, centerY)
+                            ZenithAccessibilityService.dispatchTap(centerX, centerY)
                             stepSuccess = true
                             stepLog = "Tapped element '${targetElement.text}' at ($centerX, $centerY)"
                         } else {
@@ -137,7 +137,7 @@ class SpatialPlanExecutor(
                             // Tap input to gain focus first
                             val centerX = targetElement.bounds.centerX().toFloat()
                             val centerY = targetElement.bounds.centerY().toFloat()
-                            ZenithAccessibilityService.instance?.dispatchTap(centerX, centerY)
+                            ZenithAccessibilityService.dispatchTap(centerX, centerY)
                             delay(150L)
                         }
 

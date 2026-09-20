@@ -65,7 +65,7 @@ class SelfHealingMacroEngine(
                 "Self-healing match on '${action.targetText}' (Found: '${matchedBlock.text}') -> Tapping ($targetX, $targetY)"
             )
 
-            ZenithAccessibilityService.instance?.dispatchTap(targetX, targetY)
+            ZenithAccessibilityService.dispatchTap(targetX, targetY)
             RESULT_SELF_HEALED
         } else {
             val targetX = action.fallbackXRatio * screenWidth
@@ -76,7 +76,7 @@ class SelfHealingMacroEngine(
                 "Target '${action.targetText}' not found in OCR frame. Falling back to coordinates ($targetX, $targetY)"
             )
 
-            ZenithAccessibilityService.instance?.dispatchTap(targetX, targetY)
+            ZenithAccessibilityService.dispatchTap(targetX, targetY)
             RESULT_FALLBACK
         }
     }

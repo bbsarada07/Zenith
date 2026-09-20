@@ -67,7 +67,7 @@ import java.util.concurrent.atomic.AtomicLong
  * 7. Multi-Device Web Streaming & ML Kit Vision: Embedded Ktor WebSocket server (ZenithStreamServer on port 8080)
  *    broadcasting live frames & on-demand ML Kit OCR text extractions.
  */
-class ScreenCaptureService : Service() {
+open class ScreenCaptureService : Service() {
 
     companion object {
         private const val TAG = "ZenithCaptureService"
@@ -113,6 +113,14 @@ class ScreenCaptureService : Service() {
             onBufferOverflow = BufferOverflow.DROP_OLDEST
         )
         val detectionsFlow: SharedFlow<List<ZenithDetector.Detection>> = _detectionsFlow.asSharedFlow()
+
+        @Volatile
+        var instance: ScreenCaptureService? = null
+            private set
+
+        fun broadcastStatusJson(json: JSONObject) {
+            instance?.zenithStreamServer?.broadcastJson(json)
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -155,7 +163,7 @@ class ScreenCaptureService : Service() {
     private val jpegCompressionBuffer = ByteArrayOutputStream(128 * 1024)
 
     // Adaptive Stream Quality State (scales dynamically between 35% and 75%)
-    @Volatile private var currentAdaptiveQuality: Int = 65
+    @Volatile private var currentAdaptiveQuality: Int = 75
 
     // Clipboard synchronization
     private var clipboardManager: ClipboardManager? = null
@@ -187,6 +195,7 @@ class ScreenCaptureService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         createNotificationChannel()
         mediaProjectionManager = getSystemService(Context.MEDIA_PROJECTION_SERVICE) as MediaProjectionManager
         clipboardManager = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -195,7 +204,7 @@ class ScreenCaptureService : Service() {
         }
 
         // 1. Initialize dedicated high-priority display thread
-        screenStreamThread = HandlerThread("ScreenStreamThread", Process.THREAD_PRIORITY_DISPLAY).apply {
+        screenStreamThread = HandlerThread("ZenithFramePipeline", Process.THREAD_PRIORITY_DISPLAY).apply {
             start()
             screenStreamHandler = Handler(looper)
         }
@@ -358,10 +367,23 @@ class ScreenCaptureService : Service() {
         // Sync native dimensions with WebSocket stream telemetry
         zenithStreamServer?.updateScreenDimensions(screenWidth, screenHeight)
 
+        // Dynamic 1080p resolution clamping to optimize bandwidth & memory
+        val maxDim = maxOf(screenWidth, screenHeight)
+        val captureWidth: Int
+        val captureHeight: Int
+        if (maxDim > 1920) {
+            val scale = 1920f / maxDim.toFloat()
+            captureWidth = ((screenWidth * scale).toInt() / 2) * 2
+            captureHeight = ((screenHeight * scale).toInt() / 2) * 2
+        } else {
+            captureWidth = screenWidth
+            captureHeight = screenHeight
+        }
+
         // Configure Stride-Safe ImageReader with RGBA_8888 and double buffering
         val reader = ImageReader.newInstance(
-            screenWidth,
-            screenHeight,
+            captureWidth,
+            captureHeight,
             PixelFormat.RGBA_8888,
             2
         )
@@ -373,16 +395,16 @@ class ScreenCaptureService : Service() {
 
         virtualDisplay = projection.createVirtualDisplay(
             "ZenithSpatialVirtualDisplay",
-            screenWidth,
-            screenHeight,
+            captureWidth,
+            captureHeight,
             screenDensity,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC,
+            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
             reader.surface,
             null,
             screenStreamHandler
         )
 
-        Log.i(TAG, "VirtualDisplay linked [${screenWidth}x${screenHeight}@${screenDensity}dpi].")
+        Log.i(TAG, "VirtualDisplay linked [${captureWidth}x${captureHeight}@${screenDensity}dpi].")
 
         // Attach Floating Overlays (HUD Capsule & Spatial Canvas)
         mainHandler.post {
@@ -808,6 +830,9 @@ class ScreenCaptureService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        if (instance == this) {
+            instance = null
+        }
         stopCapture()
         serviceScope.cancel()
 

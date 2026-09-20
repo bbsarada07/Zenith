@@ -43,6 +43,14 @@ class ZenithStreamServer(
 
     companion object {
         private const val TAG = "ZenithStreamServer"
+
+        @Volatile
+        var activeInstance: ZenithStreamServer? = null
+            private set
+
+        fun broadcastJsonStatic(json: JSONObject) {
+            activeInstance?.broadcastJson(json)
+        }
     }
 
     interface ServerEventListener {
@@ -63,7 +71,8 @@ class ZenithStreamServer(
     // Engine Components
     val spatialVisionEngine by lazy { SpatialVisionEngine() }
     val selfHealingMacroEngine by lazy { SelfHealingMacroEngine(spatialVisionEngine) }
-    val macroEngine by lazy { MacroEngine(frameProvider = latestFrameProvider) }
+    val semanticUIResolver by lazy { SemanticUIResolver(spatialVisionEngine, latestFrameProvider) }
+    val macroEngine by lazy { MacroEngine(context, frameProvider = latestFrameProvider) }
     val zenithSecureVault by lazy { ZenithSecureVault.getInstance(context) }
     val spatialPlanExecutor by lazy { SpatialPlanExecutor(context, zenithSecureVault) }
     val engineTelemetry by lazy {
@@ -135,57 +144,155 @@ class ZenithStreamServer(
             }
 
             when (action.uppercase()) {
-                // 1. On-Demand ML Kit OCR Processing (with StateDiffEngine Throttling)
+                // 1. Semantic UI Grounding & Intent Resolution
+                "CLICK_TEXT" -> {
+                    val targetText = json.optString("text", json.optString("target", ""))
+                    val selfHealing = json.optBoolean("selfHealing", json.optBoolean("self_healing", true))
+                    serverScope.launch {
+                        val result = semanticUIResolver.resolveAndExecute(
+                            targetQuery = targetText,
+                            enableSelfHealing = selfHealing,
+                            onRetryAlert = { alert -> broadcastJson(alert) }
+                        )
+                        val resJson = result.toJson().apply {
+                            put("type", "CLICK_TEXT_RESPONSE")
+                            put("action", "CLICK_TEXT")
+                        }
+                        conn.send(resJson.toString())
+                    }
+                }
+
+                "CLICK_NEAR_TEXT" -> {
+                    val targetText = json.optString("text", json.optString("target", ""))
+                    val direction = json.optString("direction", "RIGHT")
+                    val offset = json.optDouble("offset", 0.15).toFloat()
+                    val selfHealing = json.optBoolean("selfHealing", json.optBoolean("self_healing", true))
+                    serverScope.launch {
+                        val result = semanticUIResolver.resolveAndExecute(
+                            targetQuery = targetText,
+                            direction = direction,
+                            offsetPercent = offset,
+                            enableSelfHealing = selfHealing,
+                            onRetryAlert = { alert -> broadcastJson(alert) }
+                        )
+                        val resJson = result.toJson().apply {
+                            put("type", "CLICK_NEAR_TEXT_RESPONSE")
+                            put("action", "CLICK_NEAR_TEXT")
+                            put("direction", direction)
+                        }
+                        conn.send(resJson.toString())
+                    }
+                }
+
+                "GROUND_INTENT", "SEMANTIC_CLICK" -> {
+                    val targetText = json.optString("text", json.optString("target", ""))
+                    val direction = if (json.has("direction")) json.getString("direction") else null
+                    val offset = json.optDouble("offset", 0.15).toFloat()
+                    val selfHealing = json.optBoolean("selfHealing", true)
+                    serverScope.launch {
+                        val result = semanticUIResolver.resolveAndExecute(
+                            targetQuery = targetText,
+                            direction = direction,
+                            offsetPercent = offset,
+                            enableSelfHealing = selfHealing,
+                            onRetryAlert = { alert -> broadcastJson(alert) }
+                        )
+                        conn.send(result.toJson().toString())
+                    }
+                }
+
+                // 2. On-Demand ML Kit OCR Processing (with StateDiffEngine Throttling)
                 "SCAN_OCR", "OCR", "EXTRACT_TEXT" -> {
                     handleOcrScanRequest(conn)
                 }
 
-                // 2. Semantic Accessibility & OCR Fusion Tree
+                // 3. Semantic Accessibility & OCR Fusion Tree
                 "GET_SEMANTIC_TREE", "SEMANTIC_TREE" -> {
                     handleGetSemanticTreeRequest(conn)
                 }
 
-                // 3. Multi-Step Autonomous Plan Execution
+                // 4. Multi-Step Autonomous Plan Execution
                 "EXECUTE_PLAN", "RUN_PLAN", "SPATIAL_PLAN" -> {
                     handleExecutePlanRequest(conn, json)
                 }
 
-                // 4. Secure Keystore Credential Storage
+                // 5. Secure Keystore Credential Storage
                 "STORE_SECURE_TOKEN", "STORE_TOKEN", "SET_SECRET" -> {
                     handleStoreSecureTokenRequest(conn, json)
                 }
 
-                // 5. Secure Keystore Credential Injection
+                // 6. Secure Keystore Credential Injection
                 "INJECT_SECURE_TOKEN", "INJECT_TOKEN", "INJECT_SECRET" -> {
                     handleInjectSecureTokenRequest(conn, json)
                 }
 
-                // 6. Macro Playback & Autonomous Execution
+                // 7. Macro Playback & Autonomous Execution
                 "PLAY_MACRO", "MACRO_PLAY", "MACRO_ACTION", "EXECUTE_MACRO" -> {
-                    val macroId = json.optString("macroId", "")
-                    if (macroId.isNotEmpty()) {
-                        serverScope.launch {
-                            try {
-                                val results = spatialPlanExecutor.executeMacro(macroId)
-                                val responseJson = JSONObject().apply {
-                                    put("type", "MACRO_RESULT")
-                                    put("action", "MACRO_PLAY")
-                                    put("macroId", macroId)
-                                    put("success", results.all { it.success })
-                                    put("results", spatialPlanExecutor.toJsonArray(results))
-                                    put("timestamp", System.currentTimeMillis())
-                                }
-                                conn.send(responseJson.toString())
-                            } catch (e: Exception) {
-                                Log.e(TAG, "Error executing macro by ID: ${e.message}", e)
+                    val macroId = json.optString("macroId", json.optString("id", ""))
+                    val macroJson = json.optString("macro_json", json.optString("macroJson", ""))
+                    val selfHealing = json.optBoolean("self_healing", json.optBoolean("selfHealing", true))
+
+                    if (macroId.isNotEmpty() || macroJson.isNotEmpty()) {
+                        macroEngine.playMacro(
+                            macroJson = macroJson.ifEmpty { null },
+                            macroId = macroId.ifEmpty { null },
+                            enableSelfHealing = selfHealing,
+                            onStepProgress = { step, total, desc ->
+                                broadcastJson(JSONObject().apply {
+                                    put("type", "macro_progress")
+                                    put("currentStep", step)
+                                    put("totalSteps", total)
+                                    put("description", desc)
+                                })
                             }
-                        }
+                        )
+                        conn.send(JSONObject().apply {
+                            put("type", "MACRO_STARTED")
+                            put("macroId", macroId)
+                            put("timestamp", System.currentTimeMillis())
+                        }.toString())
                     } else {
                         handlePlayMacroRequest(conn, json)
                     }
                 }
 
-                // 6b. Voice Control Triggers
+                // 7a. Macro Persistence CRUD
+                "GET_MACROS", "LIST_MACROS" -> {
+                    val list = macroEngine.listSavedMacros()
+                    val resJson = JSONObject().apply {
+                        put("type", "MACROS_LIST")
+                        put("action", "GET_MACROS")
+                        val arr = JSONArray()
+                        for (item in list) arr.put(item)
+                        put("macros", arr)
+                        put("timestamp", System.currentTimeMillis())
+                    }
+                    conn.send(resJson.toString())
+                }
+
+                "SAVE_MACRO" -> {
+                    val recipe = macroEngine.parseRecipeFromJson(json)
+                    val saved = macroEngine.saveMacroRecipe(recipe)
+                    conn.send(JSONObject().apply {
+                        put("type", "SAVE_MACRO_RESPONSE")
+                        put("id", recipe.id)
+                        put("success", saved)
+                        put("timestamp", System.currentTimeMillis())
+                    }.toString())
+                }
+
+                "DELETE_MACRO" -> {
+                    val id = json.optString("id", json.optString("macroId", ""))
+                    val deleted = macroEngine.deleteMacro(id)
+                    conn.send(JSONObject().apply {
+                        put("type", "DELETE_MACRO_RESPONSE")
+                        put("id", id)
+                        put("success", deleted)
+                        put("timestamp", System.currentTimeMillis())
+                    }.toString())
+                }
+
+                // 7b. Voice Control Triggers
                 "VOICE_START", "START_VOICE", "VOICE_LISTEN" -> {
                     VoiceControlService.startListening(context)
                     broadcastJson(JSONObject().apply {
@@ -204,7 +311,7 @@ class ZenithStreamServer(
                     })
                 }
 
-                // 7. Client Round-Trip Latency Ping-Pong
+                // 8. Client Round-Trip Latency Ping-Pong
                 "PING" -> {
                     val clientTime = json.optLong("timestamp", System.currentTimeMillis())
                     engineTelemetry.recordPingResponse(clientTime)
@@ -216,22 +323,22 @@ class ZenithStreamServer(
                     conn.send(pongJson.toString())
                 }
 
-                // 8. Remote Tap & Touch Injection
-                "TAP", "TOUCH" -> {
-                    val normX = json.optDouble("x", 0.5).toFloat()
-                    val normY = json.optDouble("y", 0.5).toFloat()
+                // 9. Remote Tap & Touch Injection
+                "REMOTE_TAP", "TAP", "TOUCH" -> {
+                    val normX = json.optDouble("x", json.optDouble("xPercent", 0.5)).toFloat()
+                    val normY = json.optDouble("y", json.optDouble("yPercent", 0.5)).toFloat()
                     val label = if (json.has("label")) json.getString("label") else null
 
                     if (macroEngine.isRecording) {
                         macroEngine.recordTap(normX, normY, label)
                     }
 
-                    ZenithAccessibilityService.performTap(normX, normY)
+                    ZenithAccessibilityService.performClickAt(normX, normY)
                     eventListener?.onRemoteTouchReceived(normX, normY)
                 }
 
-                // 9. Remote Swipe Injection
-                "SWIPE" -> {
+                // 10. Remote Swipe Injection
+                "REMOTE_SWIPE", "SWIPE" -> {
                     val startX = json.optDouble("startX", 0.5).toFloat()
                     val startY = json.optDouble("startY", 0.7).toFloat()
                     val endX = json.optDouble("endX", 0.5).toFloat()
@@ -245,27 +352,27 @@ class ZenithStreamServer(
                     ZenithAccessibilityService.performSwipe(startX, startY, endX, endY, duration)
                 }
 
-                // 10. System Navigation Hardware Keys
+                // 11. System Navigation Hardware Keys
                 "KEY", "SYSTEM_KEY", "HARDWARE_KEY" -> {
                     val key = json.optString("key", "back").lowercase()
                     when (key) {
-                        "back" -> ZenithAccessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
-                        "home" -> ZenithAccessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME)
-                        "recents", "app_switch" -> ZenithAccessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS)
-                        "notifications" -> ZenithAccessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
-                        "quick_settings" -> ZenithAccessibilityService.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS)
+                        "back" -> ZenithAccessibilityService.performGlobalBack()
+                        "home" -> ZenithAccessibilityService.performGlobalHome()
+                        "recents", "app_switch" -> ZenithAccessibilityService.performGlobalRecents()
+                        "notifications" -> ZenithAccessibilityService.performGlobalNotifications()
+                        "quick_settings" -> ZenithAccessibilityService.performGlobalQuickSettings()
                     }
                 }
 
-                // 11. Text Injection into Focused Edit Field
-                "INJECT_TEXT", "TEXT" -> {
+                // 12. Text Injection into Focused Edit Field
+                "INPUT_TEXT", "INJECT_TEXT", "TEXT" -> {
                     val text = json.optString("text", "")
                     if (text.isNotEmpty()) {
-                        ZenithAccessibilityService.injectTextToFocus(text)
+                        ZenithAccessibilityService.inputText(text)
                     }
                 }
 
-                // 12. Device Clipboard Sync
+                // 13. Device Clipboard Sync
                 "CLIPBOARD", "SET_CLIPBOARD" -> {
                     val text = if (json.has("content")) json.optString("content", "") else json.optString("text", "")
                     if (text.isNotEmpty()) {
@@ -278,7 +385,7 @@ class ZenithStreamServer(
                     }
                 }
 
-                // 13. Privacy Mask Management
+                // 14. Privacy Mask Management
                 "ADD_MASK", "MASK_RECT" -> {
                     val left = json.optDouble("left", 0.0).toFloat()
                     val top = json.optDouble("top", 0.0).toFloat()
@@ -293,25 +400,28 @@ class ZenithStreamServer(
                     engineTelemetry.activePrivacyMasks = 0
                 }
 
-                // 14. Macro Recording Controls
-                "MACRO_RECORD_START" -> {
+                // 15. Macro Recording Controls
+                "START_MACRO_RECORD", "MACRO_RECORD_START" -> {
                     macroEngine.startRecording()
                     broadcastJson(JSONObject().apply {
                         put("type", "macro_status")
                         put("isRecording", true)
+                        put("timestamp", System.currentTimeMillis())
                     })
                 }
 
-                "MACRO_RECORD_STOP" -> {
-                    val macroJson = macroEngine.stopRecording()
+                "STOP_MACRO_RECORD", "MACRO_RECORD_STOP" -> {
+                    val name = if (json.has("name")) json.getString("name") else null
+                    val recipeJson = macroEngine.stopRecording(name)
                     broadcastJson(JSONObject().apply {
                         put("type", "macro_status")
                         put("isRecording", false)
-                        put("macroJson", macroJson)
+                        put("macro", recipeJson)
+                        put("timestamp", System.currentTimeMillis())
                     })
                 }
 
-                // 15. Deep AI Reasoning Trigger
+                // 16. Deep AI Reasoning Trigger
                 "TRIGGER_REASONING", "REASON" -> {
                     val prompt = json.optString("prompt", "Analyze screen context")
                     eventListener?.onRemoteReasoningTriggered(prompt)
@@ -595,7 +705,7 @@ class ZenithStreamServer(
             // If no frame is available, fallback directly to coordinates
             val targetX = fallbackX * screenWidth
             val targetY = fallbackY * screenHeight
-            ZenithAccessibilityService.instance?.dispatchTap(targetX, targetY)
+            ZenithAccessibilityService.dispatchTap(targetX, targetY)
 
             val fallbackResponse = JSONObject().apply {
                 put("type", "MACRO_RESULT")

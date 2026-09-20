@@ -479,6 +479,10 @@
                         <span class="metric-value" id="valLatency">-- ms</span>
                     </div>
                     <div class="metric-tile">
+                        <span class="metric-label">THROUGHPUT</span>
+                        <span class="metric-value" id="valThroughput" style="color: var(--cyber-cyan);">-- KB/s</span>
+                    </div>
+                    <div class="metric-tile">
                         <span class="metric-label">NPU INFERENCE</span>
                         <span class="metric-value" id="valNpu">-- ms</span>
                     </div>
@@ -486,22 +490,49 @@
                         <span class="metric-label">JVM HEAP RAM</span>
                         <span class="metric-value" id="valRam">-- MB</span>
                     </div>
-                    <div class="metric-tile" style="grid-column: span 2;">
-                        <span class="metric-label">ACTIVE ZERO-TRUST PRIVACY MASKS</span>
+                    <div class="metric-tile">
+                        <span class="metric-label">PRIVACY MASKS</span>
                         <span class="metric-value" id="valMasks" style="color: var(--neon-green);">0 REDACTED</span>
                     </div>
                 </div>
             </div>
 
-            <!-- Autonomous Macro & Voice Engine -->
+            <!-- Intent-Based Semantic UI Grounding Engine -->
             <div class="panel-card">
                 <div class="panel-header">
-                    <span>Autonomous Automation Engine</span>
+                    <span>Semantic UI Grounding Engine</span>
                 </div>
-                <div class="btn-group">
+                <div class="input-box">
+                    <input type="text" id="semanticTarget" placeholder="Target text (e.g. 'Settings', 'Submit', 'Pay')..." style="width: 100%; background: var(--bg-base); border: 1px solid var(--border-color); color: var(--text-primary); padding: 8px 12px; border-radius: 6px; font-family: inherit; font-size: 13px; margin-bottom: 8px;">
+                    <div style="display: flex; gap: 8px; margin-bottom: 8px;">
+                        <select id="semanticDirection" style="flex: 1; background: var(--bg-base); border: 1px solid var(--border-color); color: var(--text-primary); padding: 8px; border-radius: 6px; font-size: 12px; font-family: 'JetBrains Mono', monospace;">
+                            <option value="CENTER">Direct Target (Center)</option>
+                            <option value="RIGHT">Right of Target (Offset)</option>
+                            <option value="LEFT">Left of Target (Offset)</option>
+                            <option value="ABOVE">Above Target (Offset)</option>
+                            <option value="BELOW">Below Target (Offset)</option>
+                        </select>
+                        <button class="btn-primary" id="btnSemanticClick" style="flex: 1; background: var(--cyber-cyan); color: #000; font-weight: 700;">⚡ CLICK TARGET</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Autonomous Macro & Sequence Engine -->
+            <div class="panel-card">
+                <div class="panel-header">
+                    <span>Macro Recorder & Autonomous Replay</span>
+                </div>
+                <div class="btn-group" style="margin-bottom: 8px;">
                     <button class="btn-action" id="btnRecordMacro">🔴 REC MACRO</button>
-                    <button class="btn-action" id="btnPlayMacro">▶ PLAY MACRO</button>
+                    <button class="btn-action" id="btnPlayMacro">▶ PLAY LAST</button>
                     <button class="btn-action" id="btnVoiceToggle">🎙 VOICE LISTEN</button>
+                </div>
+                <div style="display: flex; gap: 6px; margin-bottom: 8px;">
+                    <select id="macroSelect" style="flex: 2; background: var(--bg-base); border: 1px solid var(--border-color); color: var(--text-primary); padding: 6px 8px; border-radius: 6px; font-size: 11px; font-family: 'JetBrains Mono', monospace;">
+                        <option value="">(Saved Macros...)</option>
+                    </select>
+                    <button class="btn-action" id="btnPlaySelectedMacro" style="flex: 1; font-size: 10px;">▶ RUN</button>
+                    <button class="btn-action" id="btnRefreshMacros" style="padding: 6px 8px; font-size: 10px;" title="Refresh Macros">🔄</button>
                 </div>
                 <div style="font-size: 10px; color: var(--text-muted); font-family: 'JetBrains Mono', monospace;">
                     <span>Self-Healing OCR: </span><span style="color: var(--neon-green);" id="selfHealingStatus">ACTIVE</span>
@@ -529,7 +560,7 @@
                     <textarea id="clipboardInput" placeholder="Type text, PINs, or code patches to inject to phone..."></textarea>
                     <div style="display: flex; gap: 8px;">
                         <button class="btn-primary" id="btnSendClipboard">📋 SYNC CLIPBOARD</button>
-                        <button class="btn-primary" id="btnInjectFocus" style="background: var(--neon-yellow);">⌨ INJECT TO FOCUS</button>
+                        <button class="btn-primary" id="btnInjectFocus" style="background: var(--neon-yellow); color: #000;">⌨ INJECT TO FOCUS</button>
                     </div>
                 </div>
             </div>
@@ -560,12 +591,17 @@
 
         const valFps = document.getElementById('valFps');
         const valLatency = document.getElementById('valLatency');
+        const valThroughput = document.getElementById('valThroughput');
         const valNpu = document.getElementById('valNpu');
         const valRam = document.getElementById('valRam');
         const valMasks = document.getElementById('valMasks');
         const valDims = document.getElementById('valDims');
         const eventFeed = document.getElementById('eventFeed');
         const clipboardInput = document.getElementById('clipboardInput');
+
+        const semanticTarget = document.getElementById('semanticTarget');
+        const semanticDirection = document.getElementById('semanticDirection');
+        const btnSemanticClick = document.getElementById('btnSemanticClick');
 
         const btnKeyBack = document.getElementById('btnKeyBack');
         const btnKeyHome = document.getElementById('btnKeyHome');
@@ -574,6 +610,9 @@
 
         const btnRecordMacro = document.getElementById('btnRecordMacro');
         const btnPlayMacro = document.getElementById('btnPlayMacro');
+        const macroSelect = document.getElementById('macroSelect');
+        const btnPlaySelectedMacro = document.getElementById('btnPlaySelectedMacro');
+        const btnRefreshMacros = document.getElementById('btnRefreshMacros');
         const btnVoiceToggle = document.getElementById('btnVoiceToggle');
         const btnExtractOcr = document.getElementById('btnExtractOcr');
         const btnToggleBoxes = document.getElementById('btnToggleBoxes');
@@ -585,6 +624,9 @@
         let lastFrameTime = performance.now();
         let frameCount = 0;
         let fpsTimer = performance.now();
+        let bytesReceived = 0;
+        let throughputTimer = performance.now();
+
         let currentDetections = [];
         let ocrBlocks = [];
         let ocrFrameWidth = 0;
@@ -593,7 +635,6 @@
         let isRecordingMacro = false;
         let isVoiceListening = false;
         let recordedMacroJson = "";
-        let offscreenImg = new Image();
 
         // Drag/Swipe tracking
         let dragStartX = 0;
@@ -615,6 +656,7 @@
                 statusText.innerText = 'CO-PILOT ACTIVE (8765)';
                 statusDot.className = 'status-dot connected';
                 addLog('Connected to Zenith Spatial Co-Pilot Server.');
+                refreshSavedMacros();
             };
 
             ws.onmessage = (event) => {
@@ -626,27 +668,44 @@
                         console.error('Failed to parse JSON packet:', e);
                     }
                 } else {
-                    // Binary JPEG Frame
+                    // Binary JPEG Frame: Zero-copy rendering with createImageBitmap
                     const now = performance.now();
                     const delta = Math.round(now - lastFrameTime);
                     lastFrameTime = now;
-                    valLatency.innerText = `${delta} ms`;
+                    if (valLatency) valLatency.innerText = `${delta} ms`;
 
                     frameCount++;
                     if (now - fpsTimer >= 1000) {
-                        valFps.innerText = `${frameCount} FPS`;
+                        if (valFps) valFps.innerText = `${frameCount} FPS`;
                         frameCount = 0;
                         fpsTimer = now;
                     }
 
-                    const blob = new Blob([event.data], { type: 'image/jpeg' });
-                    const blobUrl = URL.createObjectURL(blob);
+                    bytesReceived += event.data.byteLength || 0;
+                    if (now - throughputTimer >= 1000) {
+                        const kbps = (bytesReceived / 1024).toFixed(1);
+                        if (valThroughput) valThroughput.innerText = `${kbps} KB/s`;
+                        bytesReceived = 0;
+                        throughputTimer = now;
+                    }
 
-                    offscreenImg.onload = () => {
-                        renderFrameWithOverlays(offscreenImg);
-                        URL.revokeObjectURL(blobUrl);
-                    };
-                    offscreenImg.src = blobUrl;
+                    const blob = new Blob([event.data], { type: 'image/jpeg' });
+                    if ('createImageBitmap' in window) {
+                        createImageBitmap(blob).then((bitmap) => {
+                            renderFrameWithOverlays(bitmap);
+                            bitmap.close();
+                        }).catch((err) => {
+                            console.error('Bitmap decode error:', err);
+                        });
+                    } else {
+                        const blobUrl = URL.createObjectURL(blob);
+                        const img = new Image();
+                        img.onload = () => {
+                            renderFrameWithOverlays(img);
+                            URL.revokeObjectURL(blobUrl);
+                        };
+                        img.src = blobUrl;
+                    }
                 }
             };
 
@@ -662,53 +721,81 @@
         }
 
         function handleTelemetryPacket(data) {
-            if (data.fps !== undefined) valFps.innerText = `${data.fps} FPS`;
-            if (data.latency_ms !== undefined) valLatency.innerText = `${data.latency_ms} ms`;
-            if (data.npu_ms !== undefined) valNpu.innerText = `${data.npu_ms} ms`;
-            else if (data.npuLatencyMs !== undefined) valNpu.innerText = `${data.npuLatencyMs.toFixed(1)} ms`;
+            if (data.fps !== undefined && valFps) valFps.innerText = `${data.fps} FPS`;
+            if (data.latency_ms !== undefined && valLatency) valLatency.innerText = `${data.latency_ms} ms`;
+            if (data.npu_ms !== undefined && valNpu) valNpu.innerText = `${data.npu_ms} ms`;
+            else if (data.npuLatencyMs !== undefined && valNpu) valNpu.innerText = `${data.npuLatencyMs.toFixed(1)} ms`;
 
-            if (data.ram_mb !== undefined) valRam.innerText = `${data.ram_mb} MB`;
-            else if (data.ramUsedMb !== undefined) valRam.innerText = `${data.ramUsedMb} MB`;
+            if (data.ram_mb !== undefined && valRam) valRam.innerText = `${data.ram_mb} MB`;
+            else if (data.ramUsedMb !== undefined && valRam) valRam.innerText = `${data.ramUsedMb} MB`;
 
-            if (data.privacy_masks_active !== undefined) {
+            if (data.privacy_masks_active !== undefined && valMasks) {
                 valMasks.innerText = `${data.privacy_masks_active} ACTIVE`;
             }
 
             if (data.screen_width && data.screen_height) {
-                valDims.innerText = `${data.screen_width}x${data.screen_height}`;
-                canvasWrapper.style.aspectRatio = `${data.screen_width} / ${data.screen_height}`;
+                if (valDims) valDims.innerText = `${data.screen_width}x${data.screen_height}`;
+                if (canvasWrapper) canvasWrapper.style.aspectRatio = `${data.screen_width} / ${data.screen_height}`;
             }
 
             if (data.detections) currentDetections = data.detections;
             if (data.logMessage) addLog(data.logMessage);
 
-            if (data.type === 'ocr_results' || data.type === 'ocr_result') {
+            if (data.type === 'OCR_DETECTION' || data.type === 'ocr_results' || data.type === 'ocr_result') {
                 ocrBlocks = data.blocks || [];
                 ocrFrameWidth = data.frameWidth || canvas.width;
                 ocrFrameHeight = data.frameHeight || canvas.height;
                 const count = data.blockCount || (data.blocks ? data.blocks.length : 0);
-                addLog(`ML Kit OCR: ${count} blocks (${data.autoMasksAdded || 0} sensitive auto-redacted).`);
+                addLog(`ML Kit OCR: ${count} blocks detected (${data.inferenceMs || 0}ms).`);
+            } else if (data.type === 'CLICK_TEXT_RESPONSE' || data.type === 'CLICK_NEAR_TEXT_RESPONSE') {
+                if (data.status === 'SUCCESS') {
+                    addLog(`Semantic Click: '${data.target}' at (${(data.clickCoords.x * 100).toFixed(1)}%, ${(data.clickCoords.y * 100).toFixed(1)}%) in ${data.latencyMs}ms [Score: ${(data.confidence * 100).toFixed(0)}%]`, 'voice');
+                } else {
+                    addLog(`Semantic Error: ${data.error || 'Target not found'}`, 'voice');
+                }
+            } else if (data.type === 'RETRY_ALERT') {
+                addLog(`⚡ ${data.message} (Retry #${data.retryCount})`, 'macro');
+            } else if (data.type === 'MACROS_LIST') {
+                populateMacrosDropdown(data.macros || []);
             } else if (data.type === 'voice_command') {
                 addLog(`Voice Intent: "${data.transcript}" (Action: ${data.action})`, 'voice');
             } else if (data.type === 'macro_progress') {
                 addLog(`Macro [${data.currentStep}/${data.totalSteps}]: ${data.description}`, 'macro');
             } else if (data.type === 'macro_status') {
                 if (data.macroJson) recordedMacroJson = data.macroJson;
+                if (data.macro && data.macro.id) refreshSavedMacros();
             } else if (data.type === 'clipboard_sync') {
                 const clipText = data.content || data.text || '';
-                clipboardInput.value = clipText;
+                if (clipboardInput) clipboardInput.value = clipText;
                 addLog(`Office Kit Synced Clipboard: ${clipText.substring(0, 30)}...`);
+            } else if (data.type === 'accessibility_status') {
+                addLog(`Accessibility Service: ${data.status}`);
             }
         }
 
-        function renderFrameWithOverlays(img) {
-            if (canvas.width !== img.width || canvas.height !== img.height) {
-                canvas.width = img.width;
-                canvas.height = img.height;
+        function populateMacrosDropdown(macros) {
+            if (!macroSelect) return;
+            macroSelect.innerHTML = '<option value="">(Saved Macros...)</option>';
+            macros.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.id;
+                opt.innerText = `${m.name} (${m.stepCount} steps)`;
+                macroSelect.appendChild(opt);
+            });
+        }
+
+        function refreshSavedMacros() {
+            sendAction('get_macros');
+        }
+
+        function renderFrameWithOverlays(drawable) {
+            if (canvas.width !== drawable.width || canvas.height !== drawable.height) {
+                canvas.width = drawable.width;
+                canvas.height = drawable.height;
             }
 
             // 1. Draw Raw Screen Frame
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            ctx.drawImage(drawable, 0, 0, canvas.width, canvas.height);
 
             // 2. Draw Object Detection Reticles
             if (showReticles && currentDetections && currentDetections.length > 0) {
@@ -745,13 +832,19 @@
             if (showReticles && ocrBlocks && ocrBlocks.length > 0) {
                 ocrBlocks.forEach(block => {
                     let x = 0, y = 0, w = 0, h = 0;
-                    if (block.bounds && Array.isArray(block.bounds) && block.bounds.length === 4) {
-                        // Normalized bounds [left, top, right, bottom] in [0.0, 1.0]
-                        const [bLeft, bTop, bRight, bBottom] = block.bounds;
-                        x = bLeft * canvas.width;
-                        y = bTop * canvas.height;
-                        w = (bRight - bLeft) * canvas.width;
-                        h = (bBottom - bTop) * canvas.height;
+                    if (block.bounds) {
+                        if (Array.isArray(block.bounds)) {
+                            const [bLeft, bTop, bRight, bBottom] = block.bounds;
+                            x = bLeft * canvas.width;
+                            y = bTop * canvas.height;
+                            w = (bRight - bLeft) * canvas.width;
+                            h = (bBottom - bTop) * canvas.height;
+                        } else if (block.bounds.normLeft !== undefined) {
+                            x = block.bounds.normLeft * canvas.width;
+                            y = block.bounds.normTop * canvas.height;
+                            w = (block.bounds.normRight - block.bounds.normLeft) * canvas.width;
+                            h = (block.bounds.normBottom - block.bounds.normTop) * canvas.height;
+                        }
                     } else {
                         const scaleX = ocrFrameWidth > 0 ? (canvas.width / ocrFrameWidth) : 1;
                         const scaleY = ocrFrameHeight > 0 ? (canvas.height / ocrFrameHeight) : 1;
@@ -780,10 +873,10 @@
                         ctx.fillRect(x, y, w, h);
                         ctx.strokeRect(x, y, w, h);
 
-                        if (block.category) {
+                        if (block.elementType) {
                             ctx.fillStyle = '#FFE600';
                             ctx.font = '700 11px "JetBrains Mono", monospace';
-                            ctx.fillText(`⚡ ${block.category.toUpperCase()}`, x + 2, y + 12);
+                            ctx.fillText(`⚡ ${block.elementType}`, x + 2, y + 12);
                         } else if (block.text) {
                             ctx.fillStyle = '#00FF66';
                             ctx.font = '600 10px "JetBrains Mono", monospace';
@@ -825,32 +918,42 @@
             setTimeout(() => ripple.remove(), 400);
 
             if (deltaX < 0.03 && deltaY < 0.03) {
-                // Execute Tap
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    const tapPacket = JSON.stringify({
-                        action: 'tap',
-                        x: Math.min(Math.max(endX, 0), 1),
-                        y: Math.min(Math.max(endY, 0), 1)
-                    });
-                    ws.send(tapPacket);
-                    addLog(`Remote Tap: (${(endX * 100).toFixed(1)}%, ${(endY * 100).toFixed(1)}%)`);
-                }
+                // Execute Tap (REMOTE_TAP)
+                const tapX = Math.min(Math.max(endX, 0), 1);
+                const tapY = Math.min(Math.max(endY, 0), 1);
+                sendAction('remote_tap', { x: tapX, y: tapY, xPercent: tapX, yPercent: tapY });
+                addLog(`Remote Tap: (${(endX * 100).toFixed(1)}%, ${(endY * 100).toFixed(1)}%)`);
             } else {
-                // Execute Swipe
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    const swipePacket = JSON.stringify({
-                        action: 'swipe',
-                        startX: dragStartX,
-                        startY: dragStartY,
-                        endX: endX,
-                        endY: endY,
-                        durationMs: 250
-                    });
-                    ws.send(swipePacket);
-                    addLog(`Remote Swipe: (${(dragStartX * 100).toFixed(0)}%) -> (${(endX * 100).toFixed(0)}%)`);
-                }
+                // Execute Swipe (REMOTE_SWIPE)
+                sendAction('remote_swipe', {
+                    startX: dragStartX,
+                    startY: dragStartY,
+                    endX: endX,
+                    endY: endY,
+                    durationMs: 250
+                });
+                addLog(`Remote Swipe: (${(dragStartX * 100).toFixed(0)}%) -> (${(endX * 100).toFixed(0)}%)`);
             }
         });
+
+        // Intent-Based Semantic UI Grounding Click
+        if (btnSemanticClick) {
+            btnSemanticClick.addEventListener('click', () => {
+                const target = semanticTarget.value.trim();
+                if (!target) {
+                    addLog('Please enter target text to click.');
+                    return;
+                }
+                const dir = semanticDirection ? semanticDirection.value : 'CENTER';
+                if (dir === 'CENTER') {
+                    sendAction('click_text', { target, text: target, selfHealing: true });
+                    addLog(`Semantic Grounding: Resolving '${target}'...`);
+                } else {
+                    sendAction('click_near_text', { target, text: target, direction: dir, offset: 0.15, selfHealing: true });
+                    addLog(`Semantic Grounding: Resolving '${target}' [Direction: ${dir}]...`);
+                }
+            });
+        }
 
         // Hardware System Keys
         btnKeyBack.addEventListener('click', () => sendAction('system_key', { key: 'back' }));
@@ -864,20 +967,39 @@
             if (isRecordingMacro) {
                 btnRecordMacro.innerText = '⏹ STOP REC';
                 btnRecordMacro.className = 'btn-action active';
-                sendAction('macro_record_start');
+                sendAction('start_macro_record');
                 addLog('Macro Recording: ACTIVE. Performing gestures...');
             } else {
                 btnRecordMacro.innerText = '🔴 REC MACRO';
                 btnRecordMacro.className = 'btn-action';
-                sendAction('macro_record_stop');
-                addLog('Macro Recording: STOPPED and saved.');
+                sendAction('stop_macro_record');
+                addLog('Macro Recording: STOPPED and persisted.');
             }
         });
 
         btnPlayMacro.addEventListener('click', () => {
-            sendAction('macro_play', { macro_json: recordedMacroJson, self_healing: true });
+            sendAction('play_macro', { macro_json: recordedMacroJson, self_healing: true });
             addLog('Triggered Autonomous Macro Playback with Self-Healing OCR.');
         });
+
+        if (btnPlaySelectedMacro) {
+            btnPlaySelectedMacro.addEventListener('click', () => {
+                const macroId = macroSelect ? macroSelect.value : '';
+                if (!macroId) {
+                    addLog('Select a saved macro from the dropdown first.');
+                    return;
+                }
+                sendAction('execute_macro', { macroId, id: macroId, self_healing: true });
+                addLog(`Executing saved macro ID: ${macroId}...`);
+            });
+        }
+
+        if (btnRefreshMacros) {
+            btnRefreshMacros.addEventListener('click', () => {
+                refreshSavedMacros();
+                addLog('Refreshed saved macros list.');
+            });
+        }
 
         // Voice Control Listener Toggle
         btnVoiceToggle.addEventListener('click', () => {
@@ -897,7 +1019,7 @@
 
         // Vision Intelligence & Privacy
         btnExtractOcr.addEventListener('click', () => {
-            sendAction('ocr');
+            sendAction('scan_ocr');
             addLog('Executing ML Kit OCR + Zero-Trust Sensitive Redaction...');
         });
 
@@ -923,7 +1045,7 @@
         btnInjectFocus.addEventListener('click', () => {
             const text = clipboardInput.value.trim();
             if (!text) return;
-            sendAction('inject_text', { text });
+            sendAction('input_text', { text });
             addLog(`Injected text directly to focused input field.`);
         });
 
