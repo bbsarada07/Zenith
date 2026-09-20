@@ -3,9 +3,13 @@ import { ActionAuditLog } from '@/lib/schemas/actionSchema';
 
 export interface TelemetryPanelProps {
   bridgeStatus: 'CONNECTED' | 'RECONNECTING' | 'DISCONNECTED';
+  bridgeProtocol?: string;
   fps: number;
   frameLatencyMs: number;
+  npuInferenceTimeMs: number;
   npuUsagePercent: number;
+  confidenceMatrix: number;
+  executionProvider: string;
   heapMemoryMb: number;
   activeApp: string;
   auditLogs: ActionAuditLog[];
@@ -20,9 +24,13 @@ export interface TelemetryPanelProps {
 
 export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({
   bridgeStatus,
+  bridgeProtocol = 'iQOO Office Kit Bridge (Active)',
   fps,
   frameLatencyMs,
+  npuInferenceTimeMs,
   npuUsagePercent,
+  confidenceMatrix,
+  executionProvider,
   heapMemoryMb,
   activeApp,
   auditLogs,
@@ -36,21 +44,10 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({
 }) => {
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'CONNECTED': return '#00ff88';
-      case 'RECONNECTING': return '#ffe600';
-      case 'DISCONNECTED': return '#ff0055';
+      case 'CONNECTED': return '#00FF66';
+      case 'RECONNECTING': return '#FFB800';
+      case 'DISCONNECTED': return '#FF2E54';
       default: return '#8a99ad';
-    }
-  };
-
-  const getLogStatusBadge = (status: 'SUCCESS' | 'RETRY' | 'FAILED') => {
-    switch (status) {
-      case 'SUCCESS':
-        return <span style={{ color: '#00ff88', fontWeight: 700 }}>200 OK</span>;
-      case 'RETRY':
-        return <span style={{ color: '#ffe600', fontWeight: 700 }}>202 RETRY</span>;
-      case 'FAILED':
-        return <span style={{ color: '#ff0055', fontWeight: 700 }}>500 ERR</span>;
     }
   };
 
@@ -59,160 +56,210 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({
       style={{
         display: 'flex',
         flexDirection: 'column',
-        gap: '16px',
+        gap: '14px',
         height: '100%',
-        backgroundColor: '#0c0e14',
+        backgroundColor: 'rgba(14, 19, 31, 0.85)',
+        backdropFilter: 'blur(16px)',
         borderRadius: '16px',
-        border: '1px solid #1f2737',
+        border: '1px solid rgba(0, 240, 255, 0.2)',
         padding: '20px',
-        color: '#f0f4f8',
-        boxShadow: '0 10px 30px rgba(0,0,0,0.5)',
+        color: '#FFFFFF',
+        boxShadow: '0 12px 36px rgba(0, 0, 0, 0.6), inset 0 0 20px rgba(0, 240, 255, 0.03)',
         overflowY: 'auto'
       }}
     >
-      {/* Header & Status Indicator */}
+      {/* HUD Header with Bridge Protocol Badge */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
           <div
             style={{
               width: '10px',
-              height: '100%',
-              minHeight: '10px',
+              height: '10px',
               borderRadius: '50%',
               backgroundColor: getStatusColor(bridgeStatus),
-              boxShadow: `0 0 10px ${getStatusColor(bridgeStatus)}`
+              boxShadow: `0 0 12px ${getStatusColor(bridgeStatus)}`
             }}
           />
-          <span style={{ fontSize: '14px', fontWeight: 800, letterSpacing: '0.8px', color: '#f0f4f8' }}>
-            ENGINE TELEMETRY
+          <span style={{ fontSize: '13px', fontWeight: 900, letterSpacing: '0.8px', color: '#00F0FF', fontFamily: 'monospace' }}>
+            HARDWARE HUD TELEMETRY
           </span>
         </div>
         <span
           style={{
             fontSize: '11px',
-            fontWeight: 700,
-            padding: '4px 10px',
+            fontWeight: 800,
+            padding: '3px 10px',
             borderRadius: '12px',
-            backgroundColor: `${getStatusColor(bridgeStatus)}22`,
+            backgroundColor: `${getStatusColor(bridgeStatus)}18`,
             color: getStatusColor(bridgeStatus),
-            border: `1px solid ${getStatusColor(bridgeStatus)}66`
+            border: `1px solid ${getStatusColor(bridgeStatus)}55`,
+            fontFamily: 'monospace'
           }}
         >
           {bridgeStatus}
         </span>
       </div>
 
-      {/* Metrics Grid */}
+      {/* Protocol Identifier */}
+      <div
+        style={{
+          backgroundColor: '#070A12',
+          padding: '8px 12px',
+          borderRadius: '8px',
+          border: '1px solid rgba(0, 240, 255, 0.15)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          fontSize: '11px',
+          fontFamily: 'monospace'
+        }}
+      >
+        <span style={{ color: '#8A99AD' }}>BRIDGE PROTOCOL:</span>
+        <span style={{ color: '#00FF66', fontWeight: 700 }}>{bridgeProtocol}</span>
+      </div>
+
+      {/* 4-Card Hardware Metric Matrix */}
       <div
         style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(2, 1fr)',
-          gap: '12px'
+          gap: '10px'
         }}
       >
-        {/* Stream FPS */}
+        {/* NPU Latency & Execution Provider */}
         <div
           style={{
-            backgroundColor: '#121620',
-            borderRadius: '12px',
+            backgroundColor: '#090D18',
+            borderRadius: '10px',
             padding: '12px',
-            border: '1px solid #1c2331'
+            border: '1px solid rgba(0, 240, 255, 0.18)',
+            boxShadow: 'inset 0 0 10px rgba(0, 240, 255, 0.02)'
           }}
         >
-          <div style={{ fontSize: '11px', color: '#8a99ad', fontWeight: 600 }}>STREAM FPS</div>
-          <div style={{ fontSize: '24px', fontWeight: 800, color: fps >= 25 ? '#00ff88' : '#ffe600', marginTop: '4px' }}>
-            {fps} <span style={{ fontSize: '12px', color: '#8a99ad', fontWeight: 500 }}>FPS</span>
+          <div style={{ fontSize: '10px', color: '#8A99AD', fontWeight: 700, fontFamily: 'monospace' }}>
+            NPU LATENCY (QNN)
+          </div>
+          <div style={{ fontSize: '22px', fontWeight: 900, color: '#00F0FF', marginTop: '4px', fontFamily: 'monospace' }}>
+            {npuInferenceTimeMs.toFixed(1)} <span style={{ fontSize: '11px', color: '#8A99AD' }}>ms</span>
+          </div>
+          <div style={{ fontSize: '9px', color: '#00FF66', marginTop: '2px', fontFamily: 'monospace', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+            {executionProvider}
           </div>
         </div>
 
-        {/* Frame Latency */}
+        {/* Spatial Render Latency */}
         <div
           style={{
-            backgroundColor: '#121620',
-            borderRadius: '12px',
+            backgroundColor: '#090D18',
+            borderRadius: '10px',
             padding: '12px',
-            border: '1px solid #1c2331'
+            border: '1px solid rgba(0, 240, 255, 0.18)'
           }}
         >
-          <div style={{ fontSize: '11px', color: '#8a99ad', fontWeight: 600 }}>RENDER LATENCY</div>
-          <div style={{ fontSize: '24px', fontWeight: 800, color: frameLatencyMs <= 40 ? '#00f0ff' : '#ffe600', marginTop: '4px' }}>
-            {frameLatencyMs} <span style={{ fontSize: '12px', color: '#8a99ad', fontWeight: 500 }}>ms</span>
+          <div style={{ fontSize: '10px', color: '#8A99AD', fontWeight: 700, fontFamily: 'monospace' }}>
+            SPATIAL LATENCY
+          </div>
+          <div style={{ fontSize: '22px', fontWeight: 900, color: frameLatencyMs <= 50 ? '#00FF66' : '#FFB800', marginTop: '4px', fontFamily: 'monospace' }}>
+            {frameLatencyMs} <span style={{ fontSize: '11px', color: '#8A99AD' }}>ms</span>
+          </div>
+          <div style={{ fontSize: '9px', color: '#8A99AD', marginTop: '2px', fontFamily: 'monospace' }}>
+            TARGET: &lt; 50ms ({fps} FPS)
           </div>
         </div>
 
-        {/* NPU Utilization */}
+        {/* NPU Load Utilization */}
         <div
           style={{
-            backgroundColor: '#121620',
-            borderRadius: '12px',
+            backgroundColor: '#090D18',
+            borderRadius: '10px',
             padding: '12px',
-            border: '1px solid #1c2331'
+            border: '1px solid rgba(0, 240, 255, 0.18)'
           }}
         >
-          <div style={{ fontSize: '11px', color: '#8a99ad', fontWeight: 600 }}>NPU LOAD</div>
-          <div style={{ fontSize: '24px', fontWeight: 800, color: '#00f0ff', marginTop: '4px' }}>
-            {npuUsagePercent}%
+          <div style={{ fontSize: '10px', color: '#8A99AD', fontWeight: 700, fontFamily: 'monospace' }}>
+            NPU UTILIZATION
+          </div>
+          <div style={{ fontSize: '22px', fontWeight: 900, color: '#00F0FF', marginTop: '4px', fontFamily: 'monospace' }}>
+            {npuUsagePercent.toFixed(1)}%
+          </div>
+          <div style={{ fontSize: '9px', color: '#8A99AD', marginTop: '2px', fontFamily: 'monospace' }}>
+            INT8 Snapdragon Tensor Load
           </div>
         </div>
 
-        {/* Heap Memory */}
+        {/* Zod Validation Confidence Matrix */}
         <div
           style={{
-            backgroundColor: '#121620',
-            borderRadius: '12px',
+            backgroundColor: '#090D18',
+            borderRadius: '10px',
             padding: '12px',
-            border: '1px solid #1c2331'
+            border: '1px solid rgba(0, 240, 255, 0.18)'
           }}
         >
-          <div style={{ fontSize: '11px', color: '#8a99ad', fontWeight: 600 }}>HEAP USAGE</div>
-          <div style={{ fontSize: '24px', fontWeight: 800, color: '#f0f4f8', marginTop: '4px' }}>
-            {heapMemoryMb} <span style={{ fontSize: '12px', color: '#8a99ad', fontWeight: 500 }}>MB</span>
+          <div style={{ fontSize: '10px', color: '#8A99AD', fontWeight: 700, fontFamily: 'monospace' }}>
+            CONFIDENCE MATRIX
+          </div>
+          <div style={{ fontSize: '22px', fontWeight: 900, color: confidenceMatrix >= 0.70 ? '#00FF66' : '#FFB800', marginTop: '4px', fontFamily: 'monospace' }}>
+            {confidenceMatrix.toFixed(2)}
+          </div>
+          <div style={{ fontSize: '9px', color: '#8A99AD', marginTop: '2px', fontFamily: 'monospace' }}>
+            Zod Verified Score
           </div>
         </div>
       </div>
 
-      {/* Active Application Info */}
+      {/* Heap Memory & Foreground App Package */}
       <div
         style={{
-          backgroundColor: '#121620',
-          borderRadius: '12px',
-          padding: '12px 14px',
-          border: '1px solid #1c2331',
+          backgroundColor: '#070A12',
+          padding: '10px 12px',
+          borderRadius: '8px',
+          border: '1px solid rgba(0, 240, 255, 0.15)',
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'center'
+          alignItems: 'center',
+          fontSize: '11px',
+          fontFamily: 'monospace'
         }}
       >
-        <span style={{ fontSize: '11px', color: '#8a99ad', fontWeight: 600 }}>TOP PACKAGE</span>
-        <span style={{ fontSize: '12px', fontFamily: 'monospace', color: '#00f0ff', fontWeight: 600 }}>
-          {activeApp.length > 26 ? activeApp.slice(-24) : activeApp || 'system'}
-        </span>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <span style={{ color: '#8A99AD' }}>HEAP:</span>
+          <span style={{ color: '#FFFFFF', fontWeight: 700 }}>{heapMemoryMb} MB</span>
+        </div>
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <span style={{ color: '#8A99AD' }}>APP:</span>
+          <span style={{ color: '#00F0FF', fontWeight: 700 }}>
+            {activeApp.length > 20 ? activeApp.slice(-18) : activeApp || 'system'}
+          </span>
+        </div>
       </div>
 
-      {/* Spatial Overlay Viewport Toggles */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        <div style={{ fontSize: '11px', color: '#8a99ad', fontWeight: 700, letterSpacing: '0.5px' }}>
-          VIEWPORT OVERLAY MODES
+      {/* Viewport Overlay Controls */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div style={{ fontSize: '10px', color: '#8A99AD', fontWeight: 800, letterSpacing: '0.6px', fontFamily: 'monospace' }}>
+          VIEWPORT MODES
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
           <label
             style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              backgroundColor: '#121620',
-              padding: '10px 12px',
-              borderRadius: '8px',
+              backgroundColor: '#090D18',
+              padding: '8px 12px',
+              borderRadius: '6px',
               cursor: 'pointer',
-              border: '1px solid #1c2331'
+              border: '1px solid rgba(0, 240, 255, 0.15)',
+              fontSize: '11px',
+              fontFamily: 'monospace'
             }}
           >
-            <span style={{ fontSize: '12px', fontWeight: 600 }}>Show Bounding Boxes</span>
+            <span>[Show Bounding Boxes]</span>
             <input
               type="checkbox"
               checked={showBoundingBoxes}
               onChange={e => setShowBoundingBoxes(e.target.checked)}
-              style={{ accentColor: '#00f0ff', cursor: 'pointer' }}
+              style={{ accentColor: '#00F0FF', cursor: 'pointer' }}
             />
           </label>
 
@@ -221,19 +268,21 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              backgroundColor: '#121620',
-              padding: '10px 12px',
-              borderRadius: '8px',
+              backgroundColor: '#090D18',
+              padding: '8px 12px',
+              borderRadius: '6px',
               cursor: 'pointer',
-              border: '1px solid #1c2331'
+              border: '1px solid rgba(0, 240, 255, 0.15)',
+              fontSize: '11px',
+              fontFamily: 'monospace'
             }}
           >
-            <span style={{ fontSize: '12px', fontWeight: 600 }}>Show Target Offsets</span>
+            <span>[Show Target Offsets]</span>
             <input
               type="checkbox"
               checked={showTargetOffsets}
               onChange={e => setShowTargetOffsets(e.target.checked)}
-              style={{ accentColor: '#00ff88', cursor: 'pointer' }}
+              style={{ accentColor: '#00FF66', cursor: 'pointer' }}
             />
           </label>
 
@@ -242,29 +291,31 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'space-between',
-              backgroundColor: '#121620',
-              padding: '10px 12px',
-              borderRadius: '8px',
+              backgroundColor: '#090D18',
+              padding: '8px 12px',
+              borderRadius: '6px',
               cursor: 'pointer',
-              border: '1px solid #1c2331'
+              border: '1px solid rgba(0, 240, 255, 0.15)',
+              fontSize: '11px',
+              fontFamily: 'monospace'
             }}
           >
-            <span style={{ fontSize: '12px', fontWeight: 600 }}>Privacy Masking</span>
+            <span>[Privacy Masking]</span>
             <input
               type="checkbox"
               checked={enablePrivacyMasking}
               onChange={e => setEnablePrivacyMasking(e.target.checked)}
-              style={{ accentColor: '#ff0055', cursor: 'pointer' }}
+              style={{ accentColor: '#FF2E54', cursor: 'pointer' }}
             />
           </label>
         </div>
       </div>
 
-      {/* Action Audit Stream */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1, minHeight: '180px' }}>
+      {/* Chronological Action Audit Stream */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1, minHeight: '190px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <span style={{ fontSize: '11px', color: '#8a99ad', fontWeight: 700, letterSpacing: '0.5px' }}>
-            ACTION AUDIT STREAM
+          <span style={{ fontSize: '10px', color: '#8A99AD', fontWeight: 800, letterSpacing: '0.6px', fontFamily: 'monospace' }}>
+            CHRONOLOGICAL ACTION AUDIT FEED
           </span>
           {onClearLogs && (
             <button
@@ -272,9 +323,10 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({
               style={{
                 backgroundColor: 'transparent',
                 border: 'none',
-                color: '#8a99ad',
+                color: '#8A99AD',
                 fontSize: '10px',
                 cursor: 'pointer',
+                fontFamily: 'monospace',
                 textDecoration: 'underline'
               }}
             >
@@ -286,21 +338,21 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({
         <div
           style={{
             flex: 1,
-            backgroundColor: '#07090e',
-            borderRadius: '10px',
-            border: '1px solid #182232',
-            padding: '10px',
+            backgroundColor: '#05070D',
+            borderRadius: '8px',
+            border: '1px solid rgba(0, 240, 255, 0.18)',
+            padding: '8px',
             overflowY: 'auto',
             display: 'flex',
             flexDirection: 'column',
-            gap: '6px',
+            gap: '4px',
             fontFamily: 'monospace',
-            fontSize: '11px'
+            fontSize: '10px'
           }}
         >
           {auditLogs.length === 0 ? (
-            <div style={{ color: '#445166', textAlign: 'center', margin: 'auto' }}>
-              No actions executed yet.
+            <div style={{ color: '#3A485A', textAlign: 'center', margin: 'auto' }}>
+              Awaiting action executions...
             </div>
           ) : (
             auditLogs.slice().reverse().map(log => (
@@ -310,24 +362,26 @@ export const TelemetryPanel: React.FC<TelemetryPanelProps> = ({
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
-                  padding: '4px 6px',
-                  backgroundColor: '#0e131d',
-                  borderRadius: '6px',
-                  borderLeft: `3px solid ${log.status === 'SUCCESS' ? '#00ff88' : log.status === 'RETRY' ? '#ffe600' : '#ff0055'}`
+                  padding: '3px 6px',
+                  backgroundColor: '#080C16',
+                  borderRadius: '4px',
+                  borderLeft: `3px solid ${log.status === 'SUCCESS' ? '#00FF66' : log.status === 'RETRY' ? '#FFB800' : '#FF2E54'}`
                 }}
               >
-                <div style={{ display: 'flex', gap: '6px', overflow: 'hidden' }}>
-                  <span style={{ color: '#52667d' }}>[{log.timestamp}]</span>
-                  <span style={{ color: '#00f0ff', fontWeight: 600 }}>{log.command}</span>
-                  {log.targetBBox && (
-                    <span style={{ color: '#8a99ad', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                      {log.targetBBox}
-                    </span>
+                <div style={{ display: 'flex', gap: '6px', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                  <span style={{ color: '#4A5B70' }}>[{log.timestamp}]</span>
+                  <span style={{ color: '#8A99AD' }}>[{log.channel}]</span>
+                  <span style={{ color: '#00F0FF', fontWeight: 700 }}>{log.command}</span>
+                  {log.targetCoords && (
+                    <span style={{ color: '#00FF66' }}>{log.targetCoords}</span>
                   )}
+                  <span style={{ color: '#FFB800' }}>({log.confidence.toFixed(2)})</span>
                 </div>
                 <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                  <span style={{ color: '#52667d' }}>{log.latencyMs}ms</span>
-                  {getLogStatusBadge(log.status)}
+                  <span style={{ color: '#4A5B70' }}>{log.latencyMs}ms</span>
+                  <span style={{ color: log.status === 'SUCCESS' ? '#00FF66' : log.status === 'RETRY' ? '#FFB800' : '#FF2E54', fontWeight: 800 }}>
+                    {log.statusCode === 200 ? '200 OK' : log.statusCode === 202 ? '202 RETRY' : `${log.statusCode} ERR`}
+                  </span>
                 </div>
               </div>
             ))

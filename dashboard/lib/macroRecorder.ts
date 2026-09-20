@@ -1,4 +1,4 @@
-import { ActionStep } from '@/lib/schemas/actionSchema';
+import { ActionStep, ActionStepSchema } from '@/lib/schemas/actionSchema';
 
 export interface RecordedTouchPoint {
   x: number; // Normalized (0.0 - 1.0)
@@ -110,7 +110,7 @@ export class MacroRecorder {
 
     for (const pt of this.recordedPoints) {
       if (pt.type === 'CLICK') {
-        steps.push({
+        steps.push(ActionStepSchema.parse({
           id: `step_${stepIndex++}_click`,
           action: 'CLICK',
           target: {
@@ -122,8 +122,10 @@ export class MacroRecorder {
           payload: '',
           description: `Tap at normalized (${pt.x.toFixed(3)}, ${pt.y.toFixed(3)})`,
           timeoutMs: 3000,
-          expectedMutation: true
-        });
+          expectedMutation: true,
+          confidence: 1.0,
+          stage: 'PRIMARY'
+        }));
       } else if (pt.type === 'SWIPE') {
         let endX = pt.x;
         let endY = pt.y - 0.3;
@@ -135,7 +137,7 @@ export class MacroRecorder {
           }
         } catch (_) {}
 
-        steps.push({
+        steps.push(ActionStepSchema.parse({
           id: `step_${stepIndex++}_swipe`,
           action: 'SWIPE',
           swipe: {
@@ -148,17 +150,21 @@ export class MacroRecorder {
           payload: '',
           description: `Swipe from (${pt.x.toFixed(2)},${pt.y.toFixed(2)}) to (${endX.toFixed(2)},${endY.toFixed(2)})`,
           timeoutMs: 3000,
-          expectedMutation: true
-        });
+          expectedMutation: true,
+          confidence: 1.0,
+          stage: 'PRIMARY'
+        }));
       } else if (pt.type === 'TYPE' && pt.payload) {
-        steps.push({
+        steps.push(ActionStepSchema.parse({
           id: `step_${stepIndex++}_type`,
           action: 'TYPE',
           payload: pt.payload,
           description: `Type text "${pt.payload}"`,
           timeoutMs: 3000,
-          expectedMutation: false
-        });
+          expectedMutation: false,
+          confidence: 1.0,
+          stage: 'PRIMARY'
+        }));
       }
     }
 

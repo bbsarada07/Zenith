@@ -1,7 +1,33 @@
 import { z } from 'zod';
 
 /**
- * Strict Action Type Definitions
+ * Strict Spatial Action Zod Schema (iQOO Office Kit & WebSocket Hybrid Transport)
+ */
+export const SpatialActionSchema = z.object({
+  eventId: z.string(),
+  timestamp: z.number(),
+  action: z.enum([
+    'CLICK',
+    'LONG_PRESS',
+    'SWIPE',
+    'TYPE',
+    'GO_HOME',
+    'GO_BACK',
+    'RECENTS'
+  ]),
+  target: z.object({
+    x: z.number().min(0),
+    y: z.number().min(0),
+    label: z.string()
+  }),
+  confidence: z.number().min(0).max(1),
+  channel: z.enum(['WEBSOCKET_STREAM', 'OFFICE_KIT_SHARED_CLIPBOARD'])
+});
+
+export type SpatialAction = z.infer<typeof SpatialActionSchema>;
+
+/**
+ * Action Type Schema
  */
 export const ActionTypeSchema = z.enum([
   'CLICK',
@@ -16,11 +42,11 @@ export const ActionTypeSchema = z.enum([
 export type ActionType = z.infer<typeof ActionTypeSchema>;
 
 /**
- * Target Coordinate & Grounding Schema
+ * Target Structure Schema (Supports physical pixels and normalized coords)
  */
 export const TargetStructureSchema = z.object({
-  x: z.number().min(0).max(1000),
-  y: z.number().min(0).max(1000),
+  x: z.number().min(0),
+  y: z.number().min(0),
   label: z.string().default(''),
   confidence: z.number().min(0).max(1).default(1.0)
 });
@@ -28,20 +54,20 @@ export const TargetStructureSchema = z.object({
 export type TargetStructure = z.infer<typeof TargetStructureSchema>;
 
 /**
- * Swipe Coordinates Schema
+ * Swipe Parameters Schema
  */
 export const SwipeParamsSchema = z.object({
-  startX: z.number().min(0).max(1000),
-  startY: z.number().min(0).max(1000),
-  endX: z.number().min(0).max(1000),
-  endY: z.number().min(0).max(1000),
-  durationMs: z.number().min(50).max(3000).default(250)
+  startX: z.number().min(0),
+  startY: z.number().min(0),
+  endX: z.number().min(0),
+  endY: z.number().min(0),
+  durationMs: z.number().min(50).max(5000).default(250)
 });
 
 export type SwipeParams = z.infer<typeof SwipeParamsSchema>;
 
 /**
- * Action Tree Step Execution Schema
+ * Action Step Schema
  */
 export const ActionStepSchema = z.object({
   id: z.string(),
@@ -51,17 +77,19 @@ export const ActionStepSchema = z.object({
   payload: z.string().default(''),
   description: z.string().default(''),
   timeoutMs: z.number().default(5000),
-  expectedMutation: z.boolean().default(true)
+  expectedMutation: z.boolean().default(true),
+  confidence: z.number().min(0).max(1).default(1.0),
+  stage: z.enum(['PRIMARY', 'FALLBACK_OCR_RESCAN', 'FALLBACK_UI_RECOVERY']).default('PRIMARY')
 });
 
 export type ActionStep = z.infer<typeof ActionStepSchema>;
 
 /**
- * Bounding Box (BBox) Grounding Schema
+ * Bounding Box Schema
  */
 export const BoundingBoxSchema = z.object({
   id: z.string(),
-  x: z.number(), // Normalized or physical
+  x: z.number(),
   y: z.number(),
   width: z.number(),
   height: z.number(),
@@ -75,24 +103,31 @@ export const BoundingBoxSchema = z.object({
 export type BoundingBox = z.infer<typeof BoundingBoxSchema>;
 
 /**
- * Device Physical Navigation Schema
+ * Live NPU Hardware Telemetry Schema
  */
-export const NavActionSchema = z.object({
-  action: z.enum(['HOME', 'BACK', 'RECENTS', 'NOTIFICATIONS', 'QUICK_SETTINGS']),
-  timestamp: z.number().default(() => Date.now())
+export const NpuMetricsSchema = z.object({
+  npuInferenceTimeMs: z.number().min(0),
+  npuUtilizationPct: z.number().min(0).max(100),
+  executionProvider: z.string(),
+  activeModel: z.string(),
+  quantizationPrecision: z.enum(['INT8', 'FP16', 'FP32'])
 });
 
-export type NavAction = z.infer<typeof NavActionSchema>;
+export type NpuMetrics = z.infer<typeof NpuMetricsSchema>;
 
 /**
- * Live Telemetry Frame Schema
+ * Telemetry Frame Schema
  */
 export const TelemetryFrameSchema = z.object({
   fps: z.number().min(0).max(120),
   latencyMs: z.number().min(0),
-  npuUsagePercent: z.number().min(0).max(100),
+  npuInferenceTimeMs: z.number().min(0).default(18),
+  npuUsagePercent: z.number().min(0).max(100).default(42),
   heapMemoryMb: z.number().min(0),
   bridgeStatus: z.enum(['CONNECTED', 'RECONNECTING', 'DISCONNECTED']),
+  bridgeProtocol: z.string().default('iQOO Office Kit Bridge (Active)'),
+  executionProvider: z.string().default('Qualcomm QNN Direct Execution'),
+  confidenceMatrix: z.number().min(0).max(1).default(0.96),
   screenWidth: z.number().default(1080),
   screenHeight: z.number().default(2400),
   activeApp: z.string().default(''),
@@ -102,20 +137,19 @@ export const TelemetryFrameSchema = z.object({
 export type TelemetryFrame = z.infer<typeof TelemetryFrameSchema>;
 
 /**
- * Action Audit Log Entry Schema
+ * Chronological Action Audit Log Schema
  */
 export const ActionAuditLogSchema = z.object({
   id: z.string(),
   timestamp: z.string(),
-  command: string(),
+  channel: z.enum(['WEBSOCKET_STREAM', 'OFFICE_KIT_CLIPBOARD', 'LOCAL_NPU_QNN']).default('OFFICE_KIT_CLIPBOARD'),
+  command: z.string(),
+  targetCoords: z.string().optional(),
   targetBBox: z.string().optional(),
+  confidence: z.number().default(0.96),
   statusCode: z.number().default(200),
   latencyMs: z.number().default(0),
   status: z.enum(['SUCCESS', 'RETRY', 'FAILED'])
 });
 
 export type ActionAuditLog = z.infer<typeof ActionAuditLogSchema>;
-
-function string() {
-  return z.string();
-}
