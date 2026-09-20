@@ -79,7 +79,7 @@
     };
 
     struct JavaVM {
-        jint GetEnv(void** env, jint version) { return 0; }
+        jint GetEnv(void**, jint) { return 0; }
     };
 
     struct AAssetManager;
@@ -131,8 +131,8 @@ namespace ncnn {
             bool use_vulkan_compute = false;
             int num_threads = 4;
         } opt;
-        int load_param(AAsset* asset) { return 0; }
-        int load_model(AAsset* asset) { return 0; }
+        int load_param(AAsset*) { return 0; }
+        int load_model(AAsset*) { return 0; }
         void clear() {}
     };
     inline void create_gpu_instance() {}
@@ -207,6 +207,7 @@ static void apply_nms(std::vector<DetectionResult>& detections, float iou_thresh
 
 // Global JNI Lifecycle Hooks
 JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
+    (void)reserved;
     JNIEnv* env = nullptr;
     if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
         LOGE("JNI_OnLoad: Failed to obtain JNIEnv");
@@ -265,6 +266,7 @@ JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
 }
 
 JNIEXPORT void JNI_OnUnload(JavaVM* vm, void* reserved) {
+    (void)reserved;
     JNIEnv* env = nullptr;
     if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) == JNI_OK) {
         if (g_vision_target_class) {
@@ -302,6 +304,7 @@ Java_com_zenith_engine_cv_NativeVisionEngine_initModel(
     jstring modelPath,
     jstring paramPath
 ) {
+    (void)thiz;
     std::lock_guard<std::mutex> lock(g_engine_mutex);
 
     if (assetManager == nullptr || modelPath == nullptr || paramPath == nullptr) {
@@ -365,6 +368,8 @@ Java_com_zenith_engine_cv_NativeVisionEngine_detectTargets(
     jint height,
     jint rowStride
 ) {
+    (void)thiz;
+    (void)rowStride;
     if (directFrameBuffer == nullptr || width <= 0 || height <= 0) {
         return env->NewObjectArray(0, g_vision_target_class, nullptr);
     }
@@ -382,12 +387,6 @@ Java_com_zenith_engine_cv_NativeVisionEngine_detectTargets(
         std::lock_guard<std::mutex> lock(g_engine_mutex);
 
         // Stride-aware fast sampling / BGR downsampling
-        // Stride padding per row: rowStride - (width * 4)
-        const int row_padding = rowStride - (width * 4);
-
-        // Fast downsampling & RGBA -> BGR conversion into pre-allocated memory
-        // When NCNN model is active, pass through extractor
-        // Fallback / standard heuristic pass for targets
         if (g_is_model_loaded && g_ncnn_net) {
             // Inference path with NCNN
             // Target output parsing with NMS
@@ -446,6 +445,8 @@ Java_com_zenith_engine_cv_NativeVisionEngine_matchTemplateOrb(
     jint templateHeight,
     jfloatArray outCoordinates
 ) {
+    (void)thiz;
+    (void)rowStride;
     if (directFrameBuffer == nullptr || templateBytes == nullptr || outCoordinates == nullptr) {
         return JNI_FALSE;
     }
@@ -569,6 +570,8 @@ Java_com_zenith_engine_cv_NativeVisionEngine_destroy(
     JNIEnv* env,
     jobject thiz
 ) {
+    (void)env;
+    (void)thiz;
     std::lock_guard<std::mutex> lock(g_engine_mutex);
     if (g_ncnn_net) {
         g_ncnn_net->clear();

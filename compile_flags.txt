@@ -1,5 +1,8 @@
 --target=x86_64-w64-mingw32
 -std=c++17
+-D_REENTRANT
+-D_UCRT
+-Wno-everything
 -isystem
 C:/msys64/ucrt64/include/c++/15.2.0
 -isystem
