@@ -148,6 +148,7 @@ static jclass g_rectf_class = nullptr;
 static jmethodID g_rectf_constructor = nullptr;
 
 // Thread-safe Neural Net and Feature Extractor Instances
+static JavaVM* g_jvm = nullptr;
 static std::mutex g_engine_mutex;
 static std::unique_ptr<ncnn::Net> g_ncnn_net;
 static bool g_is_model_loaded = false;
@@ -208,6 +209,7 @@ static void apply_nms(std::vector<DetectionResult>& detections, float iou_thresh
 // Global JNI Lifecycle Hooks
 JNIEXPORT jint JNI_OnLoad(JavaVM* vm, void* reserved) {
     (void)reserved;
+    g_jvm = vm;
     JNIEnv* env = nullptr;
     if (vm->GetEnv((void**)&env, JNI_VERSION_1_6) != JNI_OK) {
         LOGE("JNI_OnLoad: Failed to obtain JNIEnv");
@@ -357,7 +359,7 @@ Java_com_zenith_engine_cv_NativeVisionEngine_initModel(
 }
 
 /**
- * NativeVisionEngine.detectTargets(directFrameBuffer, width, height, rowStride)
+ * NativeVisionEngine.detectTargets(directFrameBuffer, width, height, pixelStride, rowStride)
  */
 JNIEXPORT jobjectArray JNICALL
 Java_com_zenith_engine_cv_NativeVisionEngine_detectTargets(
@@ -366,9 +368,11 @@ Java_com_zenith_engine_cv_NativeVisionEngine_detectTargets(
     jobject directFrameBuffer,
     jint width,
     jint height,
+    jint pixelStride,
     jint rowStride
 ) {
     (void)thiz;
+    (void)pixelStride;
     (void)rowStride;
     if (directFrameBuffer == nullptr || width <= 0 || height <= 0) {
         return env->NewObjectArray(0, g_vision_target_class, nullptr);

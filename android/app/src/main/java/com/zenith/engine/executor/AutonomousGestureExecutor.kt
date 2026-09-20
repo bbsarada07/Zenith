@@ -151,6 +151,15 @@ class AutonomousGestureExecutor(
         }, null)
     }
 
+    data class TouchPoint(val x: Float, val y: Float)
+
+    /**
+     * Suspending multi-touch gesture injection with TouchPoint list.
+     */
+    @JvmName("injectMultiTouchPoints")
+    suspend fun injectMultiTouch(touches: List<TouchPoint>, durationMs: Long = DEFAULT_TAP_DURATION_MS): Boolean =
+        injectMultiTouch(touches.map { PointF(it.x, it.y) }, durationMs)
+
     /**
      * Suspending multi-touch gesture injection (e.g. pinch, dual-tap).
      */

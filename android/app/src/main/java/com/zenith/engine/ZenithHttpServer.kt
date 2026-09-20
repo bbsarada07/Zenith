@@ -79,7 +79,7 @@ class ZenithHttpServer(
             socket.use { s ->
                 s.soTimeout = 5000
                 val reader = BufferedReader(InputStreamReader(s.getInputStream(), StandardCharsets.UTF_8))
-                val firstLine = reader.readLine() ?: return
+                if (reader.readLine() == null) return
 
                 // Read and discard remaining request headers
                 var line: String? = reader.readLine()

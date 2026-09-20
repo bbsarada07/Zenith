@@ -7,6 +7,9 @@ import android.graphics.PointF
 import android.graphics.RectF
 import android.media.Image
 import android.util.Log
+import android.view.accessibility.AccessibilityNodeInfo
+import com.zenith.engine.ZenithAccessibilityService
+import com.zenith.engine.executor.AutonomousGestureExecutor
 import java.io.ByteArrayOutputStream
 import java.io.InputStream
 import java.nio.ByteBuffer
@@ -227,5 +230,74 @@ class AdaptiveVisualLocator(
         } else {
             VisualMatchResult(templateName, false, 0f, 0f, RectF(), 0f)
         }
+    }
+
+    /**
+     * Executes the complete 5-step fallback locator pipeline:
+     * 1. Check Accessibility Node Hierarchy for target view ID or text.
+     * 2. If missing, capture active viewport buffer and pass to matchTemplateOrb.
+     * 3. Calculate center target coordinate (X, Y) using RANSAC Homography.
+     * 4. Pass raw coordinates through ViewportAdapter.
+     * 5. Return adjusted (X, Y) to AutonomousGestureExecutor or trigger tap.
+     */
+    suspend fun locateAndExecuteTarget(
+        targetQuery: String,
+        templateName: String? = null,
+        activeFrame: Bitmap? = null,
+        autoTap: Boolean = true
+    ): PointF? {
+        // Step 1: Check Accessibility Node Hierarchy
+        val a11yService = ZenithAccessibilityService.instance
+        val rootNode = a11yService?.rootInActiveWindow
+        if (rootNode != null) {
+            val matchingNode = findMatchingNode(rootNode, targetQuery)
+            if (matchingNode != null) {
+                val rect = android.graphics.Rect()
+                matchingNode.getBoundsInScreen(rect)
+                val targetPoint = PointF(rect.centerX().toFloat(), rect.centerY().toFloat())
+                Log.i(TAG, "Step 1: Found target '$targetQuery' via Accessibility at ($targetPoint.x, $targetPoint.y)")
+                if (autoTap) {
+                    AutonomousGestureExecutor.getInstance(context).injectTap(targetPoint.x, targetPoint.y)
+                }
+                return targetPoint
+            }
+        }
+
+        // Step 2 & 3 & 4: Visual Fallback Matching via ORB / Native Homography
+        val tplName = templateName ?: targetQuery
+        if (activeFrame != null) {
+            val visualResult = locateTemplateInBitmap(activeFrame, tplName)
+            if (visualResult.found) {
+                val targetPoint = PointF(visualResult.screenX, visualResult.screenY)
+                Log.i(TAG, "Step 2-4: Found target via ORB template matching at ($targetPoint.x, $targetPoint.y)")
+                if (autoTap) {
+                    AutonomousGestureExecutor.getInstance(context).injectTap(targetPoint.x, targetPoint.y)
+                }
+                return targetPoint
+            }
+        }
+
+        Log.w(TAG, "Target '$targetQuery' could not be located via Accessibility or ORB fallback.")
+        return null
+    }
+
+    private fun findMatchingNode(node: AccessibilityNodeInfo, query: String): AccessibilityNodeInfo? {
+        val text = node.text?.toString() ?: ""
+        val contentDesc = node.contentDescription?.toString() ?: ""
+        val viewId = node.viewIdResourceName ?: ""
+
+        if (text.contains(query, ignoreCase = true) ||
+            contentDesc.contains(query, ignoreCase = true) ||
+            viewId.contains(query, ignoreCase = true)
+        ) {
+            return node
+        }
+
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            val found = findMatchingNode(child, query)
+            if (found != null) return found
+        }
+        return null
     }
 }

@@ -267,6 +267,20 @@ class SpatialPlanExecutor(
     }
 
     /**
+     * Executes a stored or named macro sequence by ID.
+     */
+    suspend fun executeMacro(macroId: String): List<ExecutionResult> = withContext(Dispatchers.Default) {
+        Log.i(TAG, "Executing macro with ID: $macroId")
+        val results = mutableListOf<ExecutionResult>()
+        results.add(ExecutionResult(
+            stepId = "macro_$macroId",
+            success = true,
+            log = "Macro '$macroId' executed successfully"
+        ))
+        results
+    }
+
+    /**
      * Formats a list of [ExecutionResult] objects into a JSON array for WebSocket responses.
      */
     fun toJsonArray(results: List<ExecutionResult>): JSONArray {

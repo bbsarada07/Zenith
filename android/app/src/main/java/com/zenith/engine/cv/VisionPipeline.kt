@@ -137,11 +137,12 @@ class VisionPipeline(
 
         val width = image.width
         val height = image.height
+        val pixelStride = plane.pixelStride
         val rowStride = plane.rowStride
 
         // Execute native target detection in C++
         val targets = if (NativeVisionEngine.isAvailable()) {
-            nativeVisionEngine.detectTargets(buffer, width, height, rowStride)
+            nativeVisionEngine.detectTargets(buffer, width, height, pixelStride, rowStride)
         } else {
             emptyArray()
         }

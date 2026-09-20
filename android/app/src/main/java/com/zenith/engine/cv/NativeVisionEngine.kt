@@ -68,6 +68,7 @@ class NativeVisionEngine : AutoCloseable {
         directFrameBuffer: ByteBuffer,
         width: Int,
         height: Int,
+        pixelStride: Int,
         rowStride: Int
     ): Array<VisionTarget>
 

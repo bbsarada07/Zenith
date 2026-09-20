@@ -160,9 +160,48 @@ class ZenithStreamServer(
                     handleInjectSecureTokenRequest(conn, json)
                 }
 
-                // 6. Self-Healing Macro Action Execution
-                "PLAY_MACRO", "MACRO_ACTION", "EXECUTE_MACRO" -> {
-                    handlePlayMacroRequest(conn, json)
+                // 6. Macro Playback & Autonomous Execution
+                "PLAY_MACRO", "MACRO_PLAY", "MACRO_ACTION", "EXECUTE_MACRO" -> {
+                    val macroId = json.optString("macroId", "")
+                    if (macroId.isNotEmpty()) {
+                        serverScope.launch {
+                            try {
+                                val results = spatialPlanExecutor.executeMacro(macroId)
+                                val responseJson = JSONObject().apply {
+                                    put("type", "MACRO_RESULT")
+                                    put("action", "MACRO_PLAY")
+                                    put("macroId", macroId)
+                                    put("success", results.all { it.success })
+                                    put("results", spatialPlanExecutor.toJsonArray(results))
+                                    put("timestamp", System.currentTimeMillis())
+                                }
+                                conn.send(responseJson.toString())
+                            } catch (e: Exception) {
+                                Log.e(TAG, "Error executing macro by ID: ${e.message}", e)
+                            }
+                        }
+                    } else {
+                        handlePlayMacroRequest(conn, json)
+                    }
+                }
+
+                // 6b. Voice Control Triggers
+                "VOICE_START", "START_VOICE", "VOICE_LISTEN" -> {
+                    VoiceControlService.startListening(context)
+                    broadcastJson(JSONObject().apply {
+                        put("type", "voice_status")
+                        put("isListening", true)
+                        put("timestamp", System.currentTimeMillis())
+                    })
+                }
+
+                "VOICE_STOP", "STOP_VOICE" -> {
+                    VoiceControlService.stopListening(context)
+                    broadcastJson(JSONObject().apply {
+                        put("type", "voice_status")
+                        put("isListening", false)
+                        put("timestamp", System.currentTimeMillis())
+                    })
                 }
 
                 // 7. Client Round-Trip Latency Ping-Pong

@@ -34,6 +34,23 @@ class VoiceControlService(
 
     companion object {
         private const val TAG = "ZenithVoiceControl"
+
+        @Volatile
+        private var defaultInstance: VoiceControlService? = null
+
+        fun getInstance(context: Context): VoiceControlService {
+            return defaultInstance ?: synchronized(this) {
+                defaultInstance ?: VoiceControlService(context.applicationContext).also { defaultInstance = it }
+            }
+        }
+
+        fun startListening(context: Context) {
+            getInstance(context).startListening()
+        }
+
+        fun stopListening(context: Context) {
+            getInstance(context).stopListening()
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -211,19 +228,14 @@ class VoiceControlService(
 
         try {
             val inputImage = InputImage.fromBitmap(bitmap, 0)
-            var targetFound = false
-            var normX = 0.5f
-            var normY = 0.5f
-
             textRecognizer.process(inputImage)
                 .addOnSuccessListener { visionText ->
                     for (block in visionText.textBlocks) {
                         if (block.text.contains(targetLabel, ignoreCase = true)) {
                             val rect = block.boundingBox
                             if (rect != null) {
-                                normX = (rect.centerX().toFloat() / bitmap.width.toFloat()).coerceIn(0f, 1f)
-                                normY = (rect.centerY().toFloat() / bitmap.height.toFloat()).coerceIn(0f, 1f)
-                                targetFound = true
+                                val normX = (rect.centerX().toFloat() / bitmap.width.toFloat()).coerceIn(0f, 1f)
+                                val normY = (rect.centerY().toFloat() / bitmap.height.toFloat()).coerceIn(0f, 1f)
                                 ZenithAccessibilityService.performTap(normX, normY)
                                 Log.i(TAG, "Voice tap injected onto '$targetLabel' at ($normX, $normY)")
                                 return@addOnSuccessListener
