@@ -128,10 +128,12 @@ class ScreenCaptureService : Service() {
     private var screenStreamThread: HandlerThread? = null
     private var screenStreamHandler: Handler? = null
 
-    // Spatial Intelligence & Streaming Server
+    // Spatial Intelligence & Streaming Servers
     private var dualInferenceEngine: DualInferenceEngine? = null
     private var autoContextAnalyzer: AutoContextAnalyzer? = null
+    private var zenithHttpServer: ZenithHttpServer? = null
     private var zenithStreamServer: ZenithStreamServer? = null
+    private val isStreamServerStarted = AtomicBoolean(false)
 
     // UI Overlays
     private var overlayHudView: OverlayHudView? = null
@@ -207,11 +209,23 @@ class ScreenCaptureService : Service() {
             Log.e(TAG, "Error initializing intelligence engines: ${e.message}", e)
         }
 
-        // 3. Instantiate ZenithStreamServer (Port 8080) with ML Kit Frame Provider
+        // 3. Instantiate ZenithHttpServer (Port 8080) & ZenithStreamServer (Port 8765)
+        try {
+            zenithHttpServer = ZenithHttpServer(
+                context = this,
+                port = 8080
+            ).apply {
+                start()
+            }
+            Log.i(TAG, "ZenithHttpServer started on port 8080.")
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to start ZenithHttpServer on port 8080: ${e.message}", e)
+        }
+
         try {
             zenithStreamServer = ZenithStreamServer(
                 context = this,
-                port = 8080,
+                port = 8765,
                 latestFrameProvider = { keyframeRingBuffer.peekLast() }
             ).apply {
                 eventListener = object : ZenithStreamServer.ServerEventListener {
@@ -237,7 +251,7 @@ class ScreenCaptureService : Service() {
                     }
                 }
             }
-            Log.i(TAG, "ZenithStreamServer initialized on port 8080.")
+            Log.i(TAG, "ZenithStreamServer initialized on port 8765.")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to instantiate ZenithStreamServer: ${e.message}", e)
         }
@@ -262,8 +276,14 @@ class ScreenCaptureService : Service() {
         startForegroundServiceWithNotification()
 
         // Launch / Ensure streaming server is running on Dispatchers.IO
-        serviceScope.launch(Dispatchers.IO) {
-            zenithStreamServer?.start()
+        if (isStreamServerStarted.compareAndSet(false, true)) {
+            serviceScope.launch(Dispatchers.IO) {
+                try {
+                    zenithStreamServer?.start()
+                } catch (e: Exception) {
+                    Log.w(TAG, "StreamServer start exception: ${e.message}")
+                }
+            }
         }
 
         if (action == ACTION_STOP) {
@@ -717,8 +737,12 @@ class ScreenCaptureService : Service() {
     private fun stopCapture() {
         val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
 
+        zenithHttpServer?.stop()
+        zenithHttpServer = null
+
         zenithStreamServer?.stop()
         zenithStreamServer = null
+        isStreamServerStarted.set(false)
 
         zenithControlHUD?.let { hud ->
             try {
@@ -803,8 +827,12 @@ class ScreenCaptureService : Service() {
         autoContextAnalyzer?.close()
         autoContextAnalyzer = null
 
+        zenithHttpServer?.stop()
+        zenithHttpServer = null
+
         zenithStreamServer?.stop()
         zenithStreamServer = null
+        isStreamServerStarted.set(false)
 
         Log.i(TAG, "ScreenCaptureService completely destroyed and resources released.")
     }

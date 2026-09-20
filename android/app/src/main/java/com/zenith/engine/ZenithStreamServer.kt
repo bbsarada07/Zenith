@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class ZenithStreamServer(
     val context: Context,
-    port: Int = 8080,
+    port: Int = 8765,
     val latestFrameProvider: () -> Bitmap? = { null }
 ) : WebSocketServer(InetSocketAddress(port)), AutoCloseable {
 
@@ -338,16 +338,16 @@ class ZenithStreamServer(
                         put("isSensitive", block.isSensitive)
 
                         val boundsObj = JSONObject().apply {
-                            put("normLeft", block.bounds.normLeft)
-                            put("normTop", block.bounds.normTop)
-                            put("normRight", block.bounds.normRight)
-                            put("normBottom", block.bounds.normBottom)
+                            put("normLeft", block.bounds.normLeft.toDouble())
+                            put("normTop", block.bounds.normTop.toDouble())
+                            put("normRight", block.bounds.normRight.toDouble())
+                            put("normBottom", block.bounds.normBottom.toDouble())
                         }
                         put("bounds", boundsObj)
 
                         val centroidObj = JSONObject().apply {
-                            put("x", block.centroid.x)
-                            put("y", block.centroid.y)
+                            put("x", block.centroid.x.toDouble())
+                            put("y", block.centroid.y.toDouble())
                         }
                         put("centroid", centroidObj)
 
@@ -673,7 +673,7 @@ class ZenithStreamServer(
     ) {
         engineTelemetry.setInferenceLatencyMs(npuLatencyMs.toLong())
         val json = engineTelemetry.collectTelemetryJson().apply {
-            put("reportedFps", fps)
+            put("reportedFps", fps.toDouble())
             put("detectionCount", detections.size)
             if (logMessage != null) put("logMessage", logMessage)
         }

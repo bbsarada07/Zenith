@@ -127,14 +127,14 @@ class MacroEngine(
 
                 when (step.type) {
                     "tap" -> {
-                        put("x", step.x)
-                        put("y", step.y)
+                        put("x", step.x.toDouble())
+                        put("y", step.y.toDouble())
                     }
                     "swipe" -> {
-                        put("startX", step.startX)
-                        put("startY", step.startY)
-                        put("endX", step.endX)
-                        put("endY", step.endY)
+                        put("startX", step.startX.toDouble())
+                        put("startY", step.startY.toDouble())
+                        put("endX", step.endX.toDouble())
+                        put("endY", step.endY.toDouble())
                         put("durationMs", step.durationMs)
                     }
                 }

@@ -601,9 +601,9 @@
         let isDragging = false;
 
         function connectWebSocket() {
-            const host = window.location.host || '127.0.0.1:8080';
+            const hostname = window.location.hostname || '127.0.0.1';
             const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-            const wsUrl = `${protocol}//${host}/stream`;
+            const wsUrl = `${protocol}//${hostname}:8765`;
 
             statusText.innerText = 'CONNECTING...';
             statusDot.className = 'status-dot';
@@ -612,7 +612,7 @@
             ws.binaryType = 'arraybuffer';
 
             ws.onopen = () => {
-                statusText.innerText = 'CO-PILOT ACTIVE (8080)';
+                statusText.innerText = 'CO-PILOT ACTIVE (8765)';
                 statusDot.className = 'status-dot connected';
                 addLog('Connected to Zenith Spatial Co-Pilot Server.');
             };

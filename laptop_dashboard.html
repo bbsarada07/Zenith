@@ -326,7 +326,7 @@
                 <div class="status-dot"></div>
                 <span id="statusText">DISCONNECTED</span>
             </div>
-            <input type="text" id="ipAddress" class="ip-input" value="192.168.1.100:8080" placeholder="phone-ip:8080">
+            <input type="text" id="ipAddress" class="ip-input" value="127.0.0.1:8765" placeholder="phone-ip:8765">
             <button id="btnToggleConnect" class="btn-connect" onclick="toggleConnection()">CONNECT</button>
         </div>
     </header>
@@ -485,10 +485,17 @@
         }
 
         function connectWebSocket() {
-            const ip = document.getElementById('ipAddress').value.trim();
+            let ip = document.getElementById('ipAddress').value.trim();
             const statusPill = document.getElementById('statusPill');
             const statusText = document.getElementById('statusText');
             const btn = document.getElementById('btnToggleConnect');
+
+            if (!ip) ip = '127.0.0.1:8765';
+            if (ip.includes(':8080')) {
+                ip = ip.replace(':8080', ':8765');
+            } else if (!ip.includes(':')) {
+                ip = `${ip}:8765`;
+            }
 
             try {
                 socket = new WebSocket(`ws://${ip}`);
