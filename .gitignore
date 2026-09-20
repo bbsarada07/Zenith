@@ -1,4 +1,21 @@
 # ==========================================
+# Node.js, Web & Dashboard Dependencies
+# ==========================================
+node_modules/
+**/node_modules/
+.next/
+out/
+.nuxt/
+.cache/
+.parcel-cache/
+.npm/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ==========================================
 # Android & Gradle Build Artifacts
 # ==========================================
 .gradle/
@@ -88,6 +105,7 @@ htmlcov/
 # ==========================================
 *.env
 .env.*
+!.env.example
 *.pem
 *.key
 *.p12
