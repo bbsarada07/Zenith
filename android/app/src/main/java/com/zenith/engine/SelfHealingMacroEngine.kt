@@ -2,8 +2,6 @@ package com.zenith.engine
 
 import android.graphics.Bitmap
 import android.util.Log
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
 
 /**
  * SelfHealingMacroEngine: Autonomous Spatial Automation with Computer Vision Self-Healing.
@@ -51,7 +49,7 @@ class SelfHealingMacroEngine(
         screenWidth: Int,
         screenHeight: Int
     ): String {
-        val recognizedBlocks = recognizeBlocks(currentBitmap)
+        val (recognizedBlocks, _) = visionEngine.processFrame(currentBitmap)
 
         // Search for matching block (case-insensitive)
         val matchedBlock = recognizedBlocks.firstOrNull { block ->
@@ -82,11 +80,4 @@ class SelfHealingMacroEngine(
             RESULT_FALLBACK
         }
     }
-
-    private suspend fun recognizeBlocks(bitmap: Bitmap): List<SpatialVisionEngine.RecognizedBlock> =
-        suspendCancellableCoroutine { continuation ->
-            visionEngine.processFrame(bitmap) { blocks, _ ->
-                continuation.resume(blocks)
-            }
-        }
 }

@@ -27,10 +27,10 @@ import java.util.concurrent.ConcurrentHashMap
  * ZenithStreamServer: High-Throughput Native WebSocket Server & Remote Command Routing Bridge.
  *
  * Extends [WebSocketServer] on port 8080 to deliver:
- * 1. Ultra-low latency binary JPEG screen streaming.
- * 2. On-demand ML Kit OCR spatial text recognition and zero-trust privacy redaction.
+ * 1. Ultra-low latency binary JPEG screen streaming with zero-trust privacy redaction.
+ * 2. On-demand ML Kit OCR spatial text recognition and element classification.
  * 3. Self-healing automation macro replay.
- * 4. Real-time telemetry broadcasting (FPS, Ping RTT, NPU latency, JVM heap).
+ * 4. Real-time telemetry broadcasting (FPS, Ping RTT, NPU latency, JVM heap RAM).
  * 5. Remote touch, swipe, system navigation, and clipboard synchronization.
  */
 class ZenithStreamServer(
@@ -260,7 +260,8 @@ class ZenithStreamServer(
 
     /**
      * Handles `SCAN_OCR`: Runs [SpatialVisionEngine] on the current frame,
-     * redacts sensitive data via [PrivacyRedactor], and responds with `OCR_DETECTION`.
+     * returns structured JSON with normalized bounding boxes, centroids, raw rects,
+     * and classification tags.
      */
     private fun handleOcrScanRequest(conn: WebSocket) {
         val bitmap = latestFrameProvider() ?: run {
@@ -274,62 +275,57 @@ class ZenithStreamServer(
 
         serverScope.launch {
             try {
-                spatialVisionEngine.processFrame(bitmap) { recognizedBlocks, inferenceLatencyMs ->
-                    engineTelemetry.setInferenceLatencyMs(inferenceLatencyMs)
+                val (recognizedBlocks, inferenceLatencyMs) = spatialVisionEngine.processFrame(bitmap)
+                engineTelemetry.setInferenceLatencyMs(inferenceLatencyMs)
 
-                    // Apply zero-trust privacy redaction to flag sensitive blocks
-                    val redactedBitmap = PrivacyRedactor.redactBitmap(bitmap, recognizedBlocks)
-                    if (redactedBitmap != bitmap && !redactedBitmap.isRecycled) {
-                        redactedBitmap.recycle()
-                    }
+                val blocksArray = JSONArray()
+                for (block in recognizedBlocks) {
+                    val blockObj = JSONObject().apply {
+                        put("id", block.id)
+                        put("text", block.text)
+                        put("elementType", block.elementType.name)
+                        put("isSensitive", block.isSensitive)
 
-                    val blocksArray = JSONArray()
-                    for (block in recognizedBlocks) {
-                        val blockObj = JSONObject().apply {
-                            put("text", block.text)
-                            put("isSensitive", block.isSensitive)
-
-                            val boundsObj = JSONObject().apply {
-                                put("normLeft", block.bounds.normLeft)
-                                put("normTop", block.bounds.normTop)
-                                put("normRight", block.bounds.normRight)
-                                put("normBottom", block.bounds.normBottom)
-                            }
-                            put("bounds", boundsObj)
-
-                            val centroidObj = JSONObject().apply {
-                                put("x", block.centroid.x)
-                                put("y", block.centroid.y)
-                            }
-                            put("centroid", centroidObj)
-
-                            val rawRectObj = JSONObject().apply {
-                                put("left", block.rawRect.left)
-                                put("top", block.rawRect.top)
-                                put("right", block.rawRect.right)
-                                put("bottom", block.rawRect.bottom)
-                            }
-                            put("rawRect", rawRectObj)
+                        val boundsObj = JSONObject().apply {
+                            put("normLeft", block.bounds.normLeft)
+                            put("normTop", block.bounds.normTop)
+                            put("normRight", block.bounds.normRight)
+                            put("normBottom", block.bounds.normBottom)
                         }
-                        blocksArray.put(blockObj)
-                    }
+                        put("bounds", boundsObj)
 
-                    val responseJson = JSONObject().apply {
-                        put("type", "OCR_DETECTION")
-                        put("action", "OCR_DETECTION")
-                        put("inferenceMs", inferenceLatencyMs)
-                        put("blockCount", recognizedBlocks.size)
-                        put("blocks", blocksArray)
-                        put("timestamp", System.currentTimeMillis())
-                    }
+                        val centroidObj = JSONObject().apply {
+                            put("x", block.centroid.x)
+                            put("y", block.centroid.y)
+                        }
+                        put("centroid", centroidObj)
 
-                    conn.send(responseJson.toString())
-                    eventListener?.onOcrCompleted(
-                        recognizedBlocks.joinToString("\n") { it.text },
-                        recognizedBlocks.size
-                    )
-                    Log.i(TAG, "OCR_DETECTION returned ${recognizedBlocks.size} blocks in ${inferenceLatencyMs}ms")
+                        val rawRectObj = JSONObject().apply {
+                            put("left", block.rawRect.left)
+                            put("top", block.rawRect.top)
+                            put("right", block.rawRect.right)
+                            put("bottom", block.rawRect.bottom)
+                        }
+                        put("rawRect", rawRectObj)
+                    }
+                    blocksArray.put(blockObj)
                 }
+
+                val responseJson = JSONObject().apply {
+                    put("type", "OCR_DETECTION")
+                    put("action", "SCAN_OCR")
+                    put("inferenceMs", inferenceLatencyMs)
+                    put("blockCount", recognizedBlocks.size)
+                    put("blocks", blocksArray)
+                    put("timestamp", System.currentTimeMillis())
+                }
+
+                conn.send(responseJson.toString())
+                eventListener?.onOcrCompleted(
+                    recognizedBlocks.joinToString("\n") { it.text },
+                    recognizedBlocks.size
+                )
+                Log.i(TAG, "OCR_DETECTION returned ${recognizedBlocks.size} blocks in ${inferenceLatencyMs}ms")
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing SCAN_OCR: ${e.message}", e)
                 val errorJson = JSONObject().apply {
@@ -342,15 +338,15 @@ class ZenithStreamServer(
     }
 
     /**
-     * Handles `PLAY_MACRO`: Executes [SelfHealingMacroEngine] against current frame.
+     * Handles `PLAY_MACRO`: Executes [SelfHealingMacroEngine] against the current frame.
      */
     private fun handlePlayMacroRequest(conn: WebSocket, json: JSONObject) {
         val targetText = json.optString("targetText", "")
-        val fallbackX = json.optDouble("x", json.optDouble("fallbackX", 0.5)).toFloat()
-        val fallbackY = json.optDouble("y", json.optDouble("fallbackY", 0.5)).toFloat()
+        val fallbackX = json.optDouble("x", json.optDouble("fallbackX", json.optDouble("fallbackXRatio", 0.5))).toFloat()
+        val fallbackY = json.optDouble("y", json.optDouble("fallbackY", json.optDouble("fallbackYRatio", 0.5))).toFloat()
 
         val bitmap = latestFrameProvider() ?: run {
-            // If no frame is available, fallback directly
+            // If no frame is available, fallback directly to coordinates
             val targetX = fallbackX * screenWidth
             val targetY = fallbackY * screenHeight
             ZenithAccessibilityService.instance?.dispatchTap(targetX, targetY)
@@ -360,6 +356,7 @@ class ZenithStreamServer(
                 put("action", "PLAY_MACRO")
                 put("targetText", targetText)
                 put("status", SelfHealingMacroEngine.RESULT_FALLBACK)
+                put("timestamp", System.currentTimeMillis())
             }
             conn.send(fallbackResponse.toString())
             return
@@ -413,6 +410,38 @@ class ZenithStreamServer(
     }
 
     /**
+     * Redacts, compresses, and streams a bitmap frame as binary JPEG over WebSocket,
+     * recycling temporary intermediate bitmaps immediately to prevent memory leaks.
+     */
+    fun sendRedactedFrame(
+        sourceBitmap: Bitmap,
+        blocks: List<SpatialVisionEngine.RecognizedBlock> = emptyList(),
+        quality: Int = 65
+    ) {
+        if (connectedClients.isEmpty()) return
+
+        val redactedBitmap = if (blocks.any { it.isSensitive }) {
+            PrivacyRedactor.redactBitmap(sourceBitmap, blocks)
+        } else {
+            sourceBitmap
+        }
+
+        val outputStream = ByteArrayOutputStream(128 * 1024)
+        try {
+            redactedBitmap.compress(Bitmap.CompressFormat.JPEG, quality, outputStream)
+            val jpegBytes = outputStream.toByteArray()
+            broadcastFrame(jpegBytes)
+        } finally {
+            if (redactedBitmap != sourceBitmap && !redactedBitmap.isRecycled) {
+                redactedBitmap.recycle()
+            }
+            try {
+                outputStream.close()
+            } catch (ignored: Exception) {}
+        }
+    }
+
+    /**
      * Broadcasts a JSON payload string to all connected WebSocket clients.
      */
     fun broadcastJson(json: JSONObject) {
@@ -437,12 +466,19 @@ class ZenithStreamServer(
     ) {
         engineTelemetry.setInferenceLatencyMs(npuLatencyMs.toLong())
         val json = engineTelemetry.collectTelemetryJson().apply {
+            put("reportedFps", fps)
+            put("detectionCount", detections.size)
             if (logMessage != null) put("logMessage", logMessage)
         }
         broadcastJson(json)
     }
 
-    fun recordMetrics(latencyMs: Long, npuMs: Float, detections: List<ZenithDetector.Detection>) {
+    @Suppress("UNUSED_PARAMETER")
+    fun recordMetrics(
+        latencyMs: Long,
+        npuMs: Float,
+        detections: List<ZenithDetector.Detection> = emptyList()
+    ) {
         engineTelemetry.setLatencyMs(latencyMs)
         engineTelemetry.setInferenceLatencyMs(npuMs.toLong())
     }

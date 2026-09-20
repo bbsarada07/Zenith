@@ -13,7 +13,7 @@ import android.view.accessibility.AccessibilityNodeInfo
  * ZenithAccessibilityService: High-Precision Remote Touch & Accessibility Gesture Dispatcher.
  *
  * Implements low-latency gesture injection for spatial automation, self-healing macros,
- * and remote web command tele-operation.
+ * and remote web command tele-operation via Android's native AccessibilityService APIs.
  */
 class ZenithAccessibilityService : AccessibilityService() {
 
@@ -26,7 +26,7 @@ class ZenithAccessibilityService : AccessibilityService() {
         fun isRunning(): Boolean = instance != null
 
         /**
-         * Dispatches a native tap at raw pixel coordinates with a completion callback.
+         * Dispatches a native tap at raw physical pixel coordinates with a completion callback.
          */
         fun dispatchTap(xPixels: Float, yPixels: Float, callback: (Boolean) -> Unit = {}) {
             val service = instance ?: run {
@@ -195,7 +195,7 @@ class ZenithAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Handled as required
+        // Event processing hook if needed
     }
 
     override fun onInterrupt() {

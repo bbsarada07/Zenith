@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * EngineTelemetry: Real-Time Metric Collection & WebSocket Telemetry Pipeline.
+ * EngineTelemetry: Real-Time Native Metric Collection & WebSocket Telemetry Pipeline.
  *
  * Runs a 500ms continuous ticker collecting stream FPS, round-trip client latency,
  * ML Kit NPU inference time, JVM heap RAM utilization, and active privacy mask counts.
@@ -38,15 +38,27 @@ class EngineTelemetry(
 
     var streamLatencyMs: Long
         get() = _streamLatencyMs.get()
-        set(value) = _npuInferenceMs.set(value)
+        set(value) {
+            _streamLatencyMs.set(value)
+        }
 
     var npuInferenceMs: Long
         get() = _npuInferenceMs.get()
-        set(value) = _npuInferenceMs.set(value)
+        set(value) {
+            _npuInferenceMs.set(value)
+        }
 
     var activePrivacyMasks: Int
         get() = _activePrivacyMasks.get()
-        set(value) = _activePrivacyMasks.set(value)
+        set(value) {
+            _activePrivacyMasks.set(value)
+        }
+
+    val streamFps: Int
+        get() = getRollingFps()
+
+    val jvmHeapRamMb: Long
+        get() = calculateHeapUsageMb()
 
     private var tickerJob: Job? = null
 
@@ -113,12 +125,16 @@ class EngineTelemetry(
         }
     }
 
+    private fun calculateHeapUsageMb(): Long {
+        val runtime = Runtime.getRuntime()
+        return (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+    }
+
     /**
      * Collects current system metrics and returns the structured JSON telemetry payload.
      */
     fun collectTelemetryJson(): JSONObject {
-        val runtime = Runtime.getRuntime()
-        val heapRamMb = (runtime.totalMemory() - runtime.freeMemory()) / (1024 * 1024)
+        val heapRamMb = calculateHeapUsageMb()
         val fps = getRollingFps()
         val latency = _streamLatencyMs.get()
         val inference = _npuInferenceMs.get()

@@ -62,6 +62,9 @@ dependencies {
     // JSON Library
     implementation("org.json:json:20231013")
 
+    // AndroidX Security Crypto (Hardware-Backed Keystore & EncryptedSharedPreferences)
+    implementation("androidx.security:security-crypto:1.1.0-alpha06")
+
     // Embedded Ktor Server for Web Dashboard & Multi-Device Streaming
     implementation("io.ktor:ktor-server-core:2.3.10")
     implementation("io.ktor:ktor-server-cio:2.3.10")

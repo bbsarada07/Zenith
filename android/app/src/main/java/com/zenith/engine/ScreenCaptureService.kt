@@ -143,6 +143,9 @@ class ScreenCaptureService : Service() {
     private val isVisionLocked = AtomicBoolean(false)
     private val lastFrameTimestampMs = AtomicLong(0L)
 
+    // Reusable Bitmap Frame Pool (reduces GC spikes and heap fragmentation during 30 FPS ingestion)
+    private val frameBufferPool = BitmapFrameBuffer()
+
     // Keyframe Ring Buffer (Rolling window of last 3 frames for zero heap bloat)
     private val keyframeRingBuffer = ConcurrentLinkedDeque<Bitmap>()
 
@@ -512,15 +515,13 @@ class ScreenCaptureService : Service() {
                 val rowPadding = rowStride - pixelStride * width
                 val paddedWidth = width + rowPadding / pixelStride
 
-                // 1. Create temporary padded bitmap to safely swallow row stride padding
-                val paddedBitmap = Bitmap.createBitmap(paddedWidth, height, Bitmap.Config.ARGB_8888)
+                // 1. Create temporary padded bitmap from frame pool to safely swallow row stride padding
+                val paddedBitmap = frameBufferPool.obtain(paddedWidth, height)
                 paddedBitmap.copyPixelsFromBuffer(buffer)
 
                 // 2. Crop out stride padding to get exact frame dimensions
                 val cleanBitmap = Bitmap.createBitmap(paddedBitmap, 0, 0, width, height)
-                if (paddedBitmap != cleanBitmap) {
-                    paddedBitmap.recycle()
-                }
+                frameBufferPool.release(paddedBitmap)
 
                 // 3. ZERO-TRUST PRIVACY MASKING: Redact sensitive UI regions before transmission
                 if (activePrivacyMasks.isNotEmpty()) {
@@ -634,7 +635,10 @@ class ScreenCaptureService : Service() {
     private fun updateRingBuffer(newFrame: Bitmap) {
         keyframeRingBuffer.addLast(newFrame)
         while (keyframeRingBuffer.size > MAX_RING_BUFFER_SIZE) {
-            keyframeRingBuffer.pollFirst()
+            val old = keyframeRingBuffer.pollFirst()
+            if (old != null && old != newFrame && !old.isRecycled) {
+                frameBufferPool.release(old)
+            }
         }
     }
 
@@ -753,7 +757,13 @@ class ScreenCaptureService : Service() {
         mediaProjection?.stop()
         mediaProjection = null
 
-        keyframeRingBuffer.clear()
+        while (keyframeRingBuffer.isNotEmpty()) {
+            val f = keyframeRingBuffer.pollFirst()
+            if (f != null && !f.isRecycled) {
+                f.recycle()
+            }
+        }
+        frameBufferPool.clear()
         Log.i(TAG, "Zenith Spatial Capture pipeline stopped.")
     }
 
