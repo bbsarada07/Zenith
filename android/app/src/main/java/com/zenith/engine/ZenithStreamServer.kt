@@ -24,14 +24,16 @@ import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * ZenithStreamServer: High-Throughput Native WebSocket Server & Remote Command Routing Bridge.
+ * ZenithStreamServer: High-Throughput Native WebSocket Server & Autonomous Co-Pilot Routing Bridge.
  *
  * Extends [WebSocketServer] on port 8080 to deliver:
  * 1. Ultra-low latency binary JPEG screen streaming with zero-trust privacy redaction.
- * 2. On-demand ML Kit OCR spatial text recognition and element classification.
- * 3. Self-healing automation macro replay.
- * 4. Real-time telemetry broadcasting (FPS, Ping RTT, NPU latency, JVM heap RAM).
- * 5. Remote touch, swipe, system navigation, and clipboard synchronization.
+ * 2. On-demand ML Kit OCR spatial text recognition with StateDiffEngine differential throttling.
+ * 3. Semantic tree extraction & multi-modal accessibility fusion (SemanticNodeFusion).
+ * 4. Autonomous multi-step plan execution (SpatialPlanExecutor).
+ * 5. Hardware-keystore backed credential storage & direct input injection (ZenithSecureVault).
+ * 6. Self-healing automation macro replay.
+ * 7. Real-time telemetry broadcasting (FPS, Ping RTT, NPU latency, JVM heap RAM).
  */
 class ZenithStreamServer(
     val context: Context,
@@ -62,9 +64,16 @@ class ZenithStreamServer(
     val spatialVisionEngine by lazy { SpatialVisionEngine() }
     val selfHealingMacroEngine by lazy { SelfHealingMacroEngine(spatialVisionEngine) }
     val macroEngine by lazy { MacroEngine(frameProvider = latestFrameProvider) }
+    val zenithSecureVault by lazy { ZenithSecureVault.getInstance(context) }
+    val spatialPlanExecutor by lazy { SpatialPlanExecutor(context, zenithSecureVault) }
     val engineTelemetry by lazy {
         EngineTelemetry { json -> broadcastJson(json) }
     }
+
+    // OCR StateDiff Cache
+    @Volatile private var lastOcrBitmap: Bitmap? = null
+    @Volatile private var cachedOcrBlocks: List<SpatialVisionEngine.RecognizedBlock> = emptyList()
+    @Volatile private var cachedOcrLatencyMs: Long = 0L
 
     // Viewport Screen Metrics
     @Volatile var screenWidth: Int = 1080
@@ -126,17 +135,37 @@ class ZenithStreamServer(
             }
 
             when (action.uppercase()) {
-                // 1. On-Demand ML Kit OCR Processing
+                // 1. On-Demand ML Kit OCR Processing (with StateDiffEngine Throttling)
                 "SCAN_OCR", "OCR", "EXTRACT_TEXT" -> {
                     handleOcrScanRequest(conn)
                 }
 
-                // 2. Self-Healing Macro Action Execution
+                // 2. Semantic Accessibility & OCR Fusion Tree
+                "GET_SEMANTIC_TREE", "SEMANTIC_TREE" -> {
+                    handleGetSemanticTreeRequest(conn)
+                }
+
+                // 3. Multi-Step Autonomous Plan Execution
+                "EXECUTE_PLAN", "RUN_PLAN", "SPATIAL_PLAN" -> {
+                    handleExecutePlanRequest(conn, json)
+                }
+
+                // 4. Secure Keystore Credential Storage
+                "STORE_SECURE_TOKEN", "STORE_TOKEN", "SET_SECRET" -> {
+                    handleStoreSecureTokenRequest(conn, json)
+                }
+
+                // 5. Secure Keystore Credential Injection
+                "INJECT_SECURE_TOKEN", "INJECT_TOKEN", "INJECT_SECRET" -> {
+                    handleInjectSecureTokenRequest(conn, json)
+                }
+
+                // 6. Self-Healing Macro Action Execution
                 "PLAY_MACRO", "MACRO_ACTION", "EXECUTE_MACRO" -> {
                     handlePlayMacroRequest(conn, json)
                 }
 
-                // 3. Client Round-Trip Latency Ping-Pong
+                // 7. Client Round-Trip Latency Ping-Pong
                 "PING" -> {
                     val clientTime = json.optLong("timestamp", System.currentTimeMillis())
                     engineTelemetry.recordPingResponse(clientTime)
@@ -148,7 +177,7 @@ class ZenithStreamServer(
                     conn.send(pongJson.toString())
                 }
 
-                // 4. Remote Tap & Touch Injection
+                // 8. Remote Tap & Touch Injection
                 "TAP", "TOUCH" -> {
                     val normX = json.optDouble("x", 0.5).toFloat()
                     val normY = json.optDouble("y", 0.5).toFloat()
@@ -162,7 +191,7 @@ class ZenithStreamServer(
                     eventListener?.onRemoteTouchReceived(normX, normY)
                 }
 
-                // 5. Remote Swipe Injection
+                // 9. Remote Swipe Injection
                 "SWIPE" -> {
                     val startX = json.optDouble("startX", 0.5).toFloat()
                     val startY = json.optDouble("startY", 0.7).toFloat()
@@ -177,7 +206,7 @@ class ZenithStreamServer(
                     ZenithAccessibilityService.performSwipe(startX, startY, endX, endY, duration)
                 }
 
-                // 6. System Navigation Hardware Keys
+                // 10. System Navigation Hardware Keys
                 "KEY", "SYSTEM_KEY", "HARDWARE_KEY" -> {
                     val key = json.optString("key", "back").lowercase()
                     when (key) {
@@ -189,7 +218,7 @@ class ZenithStreamServer(
                     }
                 }
 
-                // 7. Text Injection into Focused Edit Field
+                // 11. Text Injection into Focused Edit Field
                 "INJECT_TEXT", "TEXT" -> {
                     val text = json.optString("text", "")
                     if (text.isNotEmpty()) {
@@ -197,7 +226,7 @@ class ZenithStreamServer(
                     }
                 }
 
-                // 8. Device Clipboard Sync
+                // 12. Device Clipboard Sync
                 "CLIPBOARD", "SET_CLIPBOARD" -> {
                     val text = if (json.has("content")) json.optString("content", "") else json.optString("text", "")
                     if (text.isNotEmpty()) {
@@ -210,7 +239,7 @@ class ZenithStreamServer(
                     }
                 }
 
-                // 9. Privacy Mask Management
+                // 13. Privacy Mask Management
                 "ADD_MASK", "MASK_RECT" -> {
                     val left = json.optDouble("left", 0.0).toFloat()
                     val top = json.optDouble("top", 0.0).toFloat()
@@ -225,7 +254,7 @@ class ZenithStreamServer(
                     engineTelemetry.activePrivacyMasks = 0
                 }
 
-                // 10. Macro Recording Controls
+                // 14. Macro Recording Controls
                 "MACRO_RECORD_START" -> {
                     macroEngine.startRecording()
                     broadcastJson(JSONObject().apply {
@@ -243,7 +272,7 @@ class ZenithStreamServer(
                     })
                 }
 
-                // 11. Deep AI Reasoning Trigger
+                // 15. Deep AI Reasoning Trigger
                 "TRIGGER_REASONING", "REASON" -> {
                     val prompt = json.optString("prompt", "Analyze screen context")
                     eventListener?.onRemoteReasoningTriggered(prompt)
@@ -259,9 +288,9 @@ class ZenithStreamServer(
     }
 
     /**
-     * Handles `SCAN_OCR`: Runs [SpatialVisionEngine] on the current frame,
-     * returns structured JSON with normalized bounding boxes, centroids, raw rects,
-     * and classification tags.
+     * Handles `SCAN_OCR`: Uses [StateDiffEngine] to check if screen state is static.
+     * If screen has not changed, returns cached OCR detection to conserve battery/thermal budget.
+     * Otherwise, runs [SpatialVisionEngine] and caches result.
      */
     private fun handleOcrScanRequest(conn: WebSocket) {
         val bitmap = latestFrameProvider() ?: run {
@@ -275,7 +304,29 @@ class ZenithStreamServer(
 
         serverScope.launch {
             try {
-                val (recognizedBlocks, inferenceLatencyMs) = spatialVisionEngine.processFrame(bitmap)
+                val previousBmp = lastOcrBitmap
+                val hasChanged = StateDiffEngine.hasScreenChanged(previousBmp, bitmap)
+
+                val (recognizedBlocks, inferenceLatencyMs) = if (!hasChanged && cachedOcrBlocks.isNotEmpty()) {
+                    Log.d(TAG, "Screen unchanged (StateDiff < threshold). Returning cached OCR blocks (${cachedOcrBlocks.size}).")
+                    Pair(cachedOcrBlocks, cachedOcrLatencyMs)
+                } else {
+                    val result = spatialVisionEngine.processFrame(bitmap)
+                    cachedOcrBlocks = result.first
+                    cachedOcrLatencyMs = result.second
+
+                    // Store thumbnail for future state difference checks
+                    try {
+                        val old = lastOcrBitmap
+                        lastOcrBitmap = Bitmap.createScaledBitmap(bitmap, 64, 64, true)
+                        if (old != null && !old.isRecycled && old != lastOcrBitmap) {
+                            old.recycle()
+                        }
+                    } catch (ignored: Exception) {}
+
+                    result
+                }
+
                 engineTelemetry.setInferenceLatencyMs(inferenceLatencyMs)
 
                 val blocksArray = JSONArray()
@@ -316,6 +367,7 @@ class ZenithStreamServer(
                     put("action", "SCAN_OCR")
                     put("inferenceMs", inferenceLatencyMs)
                     put("blockCount", recognizedBlocks.size)
+                    put("isCached", !hasChanged)
                     put("blocks", blocksArray)
                     put("timestamp", System.currentTimeMillis())
                 }
@@ -325,7 +377,7 @@ class ZenithStreamServer(
                     recognizedBlocks.joinToString("\n") { it.text },
                     recognizedBlocks.size
                 )
-                Log.i(TAG, "OCR_DETECTION returned ${recognizedBlocks.size} blocks in ${inferenceLatencyMs}ms")
+                Log.i(TAG, "OCR_DETECTION returned ${recognizedBlocks.size} blocks (Cached: ${!hasChanged}) in ${inferenceLatencyMs}ms")
             } catch (e: Exception) {
                 Log.e(TAG, "Error processing SCAN_OCR: ${e.message}", e)
                 val errorJson = JSONObject().apply {
@@ -335,6 +387,161 @@ class ZenithStreamServer(
                 conn.send(errorJson.toString())
             }
         }
+    }
+
+    /**
+     * Handles `GET_SEMANTIC_TREE`: Captures accessibility tree and fuses with ML Kit OCR.
+     */
+    private fun handleGetSemanticTreeRequest(conn: WebSocket) {
+        serverScope.launch {
+            try {
+                val a11yTree = SemanticNodeFusion.captureSemanticTree()
+                val bitmap = latestFrameProvider()
+
+                val fusedElements = if (bitmap != null) {
+                    val (ocrBlocks, _) = spatialVisionEngine.processFrame(bitmap)
+                    SemanticNodeFusion.fuse(ocrBlocks, a11yTree)
+                } else if (cachedOcrBlocks.isNotEmpty()) {
+                    SemanticNodeFusion.fuse(cachedOcrBlocks, a11yTree)
+                } else {
+                    a11yTree
+                }
+
+                val responseJson = JSONObject().apply {
+                    put("type", "SEMANTIC_TREE")
+                    put("action", "GET_SEMANTIC_TREE")
+                    put("elementCount", fusedElements.size)
+                    put("elements", SemanticNodeFusion.toJsonArray(fusedElements))
+                    put("timestamp", System.currentTimeMillis())
+                }
+
+                conn.send(responseJson.toString())
+                Log.i(TAG, "GET_SEMANTIC_TREE returned ${fusedElements.size} fused semantic elements")
+            } catch (e: Exception) {
+                Log.e(TAG, "Error extracting semantic tree: ${e.message}", e)
+                val errorJson = JSONObject().apply {
+                    put("type", "SEMANTIC_TREE_ERROR")
+                    put("message", e.message ?: "Failed to extract semantic tree")
+                }
+                conn.send(errorJson.toString())
+            }
+        }
+    }
+
+    /**
+     * Handles `EXECUTE_PLAN`: Parses multi-step plan steps and triggers [SpatialPlanExecutor].
+     */
+    private fun handleExecutePlanRequest(conn: WebSocket, json: JSONObject) {
+        serverScope.launch {
+            try {
+                val stepsArray = when {
+                    json.has("steps") -> json.getJSONArray("steps")
+                    json.has("plan") -> json.getJSONArray("plan")
+                    else -> JSONArray()
+                }
+
+                val planSteps = mutableListOf<SpatialPlanExecutor.PlanStep>()
+                for (i in 0 until stepsArray.length()) {
+                    val stepObj = stepsArray.getJSONObject(i)
+                    planSteps.add(SpatialPlanExecutor.PlanStep.fromJson(stepObj))
+                }
+
+                if (planSteps.isEmpty()) {
+                    val errorJson = JSONObject().apply {
+                        put("type", "PLAN_ERROR")
+                        put("message", "No plan steps provided.")
+                    }
+                    conn.send(errorJson.toString())
+                    return@launch
+                }
+
+                val executionResults = spatialPlanExecutor.executePlan(planSteps)
+                val allSuccessful = executionResults.all { it.success }
+
+                val responseJson = JSONObject().apply {
+                    put("type", "PLAN_EXECUTION_RESULT")
+                    put("action", "EXECUTE_PLAN")
+                    put("totalSteps", planSteps.size)
+                    put("executedSteps", executionResults.size)
+                    put("success", allSuccessful)
+                    put("results", spatialPlanExecutor.toJsonArray(executionResults))
+                    put("timestamp", System.currentTimeMillis())
+                }
+
+                conn.send(responseJson.toString())
+            } catch (e: Exception) {
+                Log.e(TAG, "Error executing spatial plan: ${e.message}", e)
+                val errorJson = JSONObject().apply {
+                    put("type", "PLAN_ERROR")
+                    put("message", e.message ?: "Plan execution error")
+                }
+                conn.send(errorJson.toString())
+            }
+        }
+    }
+
+    /**
+     * Handles `STORE_SECURE_TOKEN`: Stores credential securely in [ZenithSecureVault].
+     */
+    private fun handleStoreSecureTokenRequest(conn: WebSocket, json: JSONObject) {
+        val key = json.optString("key", "")
+        val secret = when {
+            json.has("secret") -> json.getString("secret")
+            json.has("value") -> json.getString("value")
+            json.has("token") -> json.getString("token")
+            else -> ""
+        }
+
+        if (key.isBlank() || secret.isBlank()) {
+            val errorJson = JSONObject().apply {
+                put("type", "SECURE_VAULT_ERROR")
+                put("message", "Key and secret value cannot be blank.")
+            }
+            conn.send(errorJson.toString())
+            return
+        }
+
+        zenithSecureVault.storeCredential(key, secret)
+
+        val responseJson = JSONObject().apply {
+            put("type", "SECURE_VAULT_RESPONSE")
+            put("action", "STORE_SECURE_TOKEN")
+            put("key", key)
+            put("status", "STORED_SUCCESSFULLY")
+            put("timestamp", System.currentTimeMillis())
+        }
+        conn.send(responseJson.toString())
+    }
+
+    /**
+     * Handles `INJECT_SECURE_TOKEN`: Decrypts and injects token directly into Accessibility input.
+     */
+    private fun handleInjectSecureTokenRequest(conn: WebSocket, json: JSONObject) {
+        val targetNodeId = when {
+            json.has("targetNodeId") -> json.getString("targetNodeId")
+            json.has("targetId") -> json.getString("targetId")
+            json.has("target") -> json.getString("target")
+            else -> ""
+        }
+
+        val credentialKey = when {
+            json.has("credentialKey") -> json.getString("credentialKey")
+            json.has("key") -> json.getString("key")
+            else -> ""
+        }
+
+        val success = zenithSecureVault.injectCredentialToField(targetNodeId, credentialKey)
+
+        val responseJson = JSONObject().apply {
+            put("type", "SECURE_VAULT_RESPONSE")
+            put("action", "INJECT_SECURE_TOKEN")
+            put("targetId", targetNodeId)
+            put("key", credentialKey)
+            put("success", success)
+            put("status", if (success) "INJECTED_SUCCESSFULLY" else "INJECTION_FAILED")
+            put("timestamp", System.currentTimeMillis())
+        }
+        conn.send(responseJson.toString())
     }
 
     /**
@@ -493,6 +700,12 @@ class ZenithStreamServer(
         serverScope.cancel()
         engineTelemetry.close()
         spatialVisionEngine.close()
+
+        val lastBmp = lastOcrBitmap
+        if (lastBmp != null && !lastBmp.isRecycled) {
+            lastBmp.recycle()
+            lastOcrBitmap = null
+        }
 
         try {
             stop(1000)
