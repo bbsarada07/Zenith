@@ -75,12 +75,10 @@ class ZenithOverlayManager(
     @SuppressLint("ClickableViewAccessibility")
     fun attachOverlay() {
         if (isOverlayAttached) return
-        if (!hasOverlayPermission()) {
-            Log.w(TAG, "SYSTEM_ALERT_WINDOW permission missing. Cannot attach overlay.")
-            return
-        }
 
-        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        val layoutFlag = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
         } else {
             @Suppress("DEPRECATION")
