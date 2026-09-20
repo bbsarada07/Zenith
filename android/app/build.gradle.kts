@@ -87,6 +87,9 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
 
+    // OkHttp WebSocket Client
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
     // AndroidX & Architecture Components
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")

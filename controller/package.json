@@ -1,0 +1,20 @@
+{
+  "name": "zenith-planner-controller",
+  "version": "2.0.0",
+  "description": "Zenith AI Autonomous Spatial Co-Pilot Node.js Controller & DAG Planner",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "ts-node controller.ts"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "@types/ws": "^8.5.10",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.4.5"
+  }
+}
